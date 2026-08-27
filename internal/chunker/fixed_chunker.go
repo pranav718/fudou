@@ -59,3 +59,8 @@ func (fc *FixedChunker) Split(r io.Reader, chunkSize int64) ([]Chunk, error) {
 
 	return chunks, nil
 }
+
+func (fc *FixedChunker) Join(chunks []Chunk, w io.Writer) error {
+	reassembler := NewReassembler()
+	return reassembler.Join(chunks, w)
+}
