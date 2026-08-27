@@ -37,23 +37,23 @@ func (h *APIHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := strings.Trim(r.URL.Path, "/")
 	parts := strings.Split(path, "/")
 
-	if len(parts) >= 3 && parts[0] == "api" && parts[1] == "nodes" && parts[2] == "heartbeat" && r.Method == http.MethodPost {
+	if len(parts) == 3 && parts[0] == "api" && parts[1] == "nodes" && parts[2] == "heartbeat" && r.Method == http.MethodPost {
 		h.handleNodeHeartbeat(w, r)
 		return
 	}
 
-	if len(parts) >= 3 && parts[0] == "api" && parts[1] == "auth" && parts[2] == "token" && r.Method == http.MethodPost {
+	if len(parts) == 3 && parts[0] == "api" && parts[1] == "auth" && parts[2] == "token" && r.Method == http.MethodPost {
 		h.handleGenerateToken(w, r)
 		return
 	}
 
-	if len(parts) >= 3 && parts[0] == "api" && parts[1] == "admin" && parts[2] == "nodes" && r.Method == http.MethodGet {
+	if len(parts) == 3 && parts[0] == "api" && parts[1] == "admin" && parts[2] == "nodes" && r.Method == http.MethodGet {
 		h.handleListNodes(w, r)
 		return
 	}
 
-	if len(parts) >= 3 && parts[0] == "api" && parts[1] == "files" {
-		if len(parts) == 3 {
+	if len(parts) >= 2 && parts[0] == "api" && parts[1] == "files" {
+		if len(parts) == 2 {
 			switch r.Method {
 			case http.MethodGet:
 				h.handleListFiles(w, r)
@@ -65,16 +65,16 @@ func (h *APIHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if len(parts) == 4 {
-			fileID := parts[3]
+		if len(parts) == 3 {
+			fileID := parts[2]
 			if r.Method == http.MethodDelete {
 				h.handleDeleteFile(w, r, fileID)
 				return
 			}
 		}
 
-		if len(parts) == 5 && parts[4] == "download" && r.Method == http.MethodGet {
-			fileID := parts[3]
+		if len(parts) == 4 && parts[3] == "download" && r.Method == http.MethodGet {
+			fileID := parts[2]
 			h.handleDownloadFile(w, r, fileID)
 			return
 		}
