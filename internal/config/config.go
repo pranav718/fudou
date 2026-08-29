@@ -4,7 +4,7 @@ type CoordinatorConfig struct {
 	Port              int
 	MetadataDBPath    string
 	ReplicationFactor int
-	StorageNodes      []string
+	AuthSecret        string
 }
 
 type NodeConfig struct {
@@ -18,9 +18,9 @@ type NodeConfig struct {
 func DefaultCoordinatorConfig() CoordinatorConfig {
 	return CoordinatorConfig{
 		Port:              8080,
-		MetadataDBPath:    "./data/metadata.db",
+		MetadataDBPath:    "./data/metadata.json",
 		ReplicationFactor: 3,
-		StorageNodes:      []string{},
+		AuthSecret:        "fudou-secret-key-32bytes-secure-00",
 	}
 }
 
