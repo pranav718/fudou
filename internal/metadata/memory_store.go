@@ -56,7 +56,7 @@ func (m *MemoryStore) ListFiles(userID string) ([]FileRecord, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	var result []FileRecord
+	result := make([]FileRecord, 0, len(m.files))
 	for _, file := range m.files {
 		if userID == "" || file.UserID == userID {
 			result = append(result, file)
