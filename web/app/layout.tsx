@@ -1,5 +1,7 @@
 import "./globals.css";
 import React from "react";
+import { AuthProvider } from "../context/AuthContext";
+import Navbar from "../components/Navbar";
 
 export const metadata = {
   title: "Fudou Distributed Backup",
@@ -13,7 +15,12 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <AuthProvider>
+          <Navbar />
+          {children}
+        </AuthProvider>
+      </body>
     </html>
   );
 }
