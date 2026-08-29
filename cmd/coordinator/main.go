@@ -39,13 +39,18 @@ func run() error {
 			cfg.ReplicationFactor = rf
 		}
 	}
-
-	secret := os.Getenv("AUTH_SECRET")
-	if secret == "" {
-		secret = "fudou-dev-secret-key-1234567890"
+	if dbPath := os.Getenv("METADATA_PATH"); dbPath != "" {
+		cfg.MetadataDBPath = dbPath
+	}
+	if secret := os.Getenv("AUTH_SECRET"); secret != "" {
+		cfg.AuthSecret = secret
 	}
 
-	metaStore := metadata.NewMemoryStore()
+	metaStore, err := metadata.NewFileStore(cfg.MetadataDBPath)
+	if err != nil {
+		return fmt.Errorf("failed to initialize metadata store: %w", err)
+	}
+
 	chk := chunker.NewFixedChunker(chunker.DefaultChunkSize)
 	ras := chunker.NewReassembler()
 	enc := crypto.NewAESGCMEncryptor()
@@ -56,9 +61,10 @@ func run() error {
 
 	backup := coordinator.NewBackupPipeline(chk, enc, hasher, metaStore, dist, transfer, cfg.ReplicationFactor)
 	restore := coordinator.NewRestorePipeline(ras, enc, hasher, metaStore, transfer)
-	tokenService := auth.NewTokenService(secret, 24*time.Hour)
+	tokenService := auth.NewTokenService(cfg.AuthSecret, 24*time.Hour)
 
 	apiHandler := api.NewAPIHandler(tokenService, metaStore, backup, restore)
+	handlerWithMiddleware := api.CORSMiddleware(api.LoggingMiddleware(apiHandler))
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -68,7 +74,7 @@ func run() error {
 
 	server := &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.Port),
-		Handler: apiHandler,
+		Handler: handlerWithMiddleware,
 	}
 
 	errChan := make(chan error, 1)
