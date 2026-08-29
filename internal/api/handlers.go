@@ -52,6 +52,11 @@ func (h *APIHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(parts) == 3 && parts[0] == "api" && parts[1] == "admin" && parts[2] == "metrics" && r.Method == http.MethodGet {
+		h.handleClusterMetrics(w, r)
+		return
+	}
+
 	if len(parts) >= 2 && parts[0] == "api" && parts[1] == "files" {
 		if len(parts) == 2 {
 			switch r.Method {
@@ -147,6 +152,44 @@ func (h *APIHandler) handleListNodes(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(nodes)
+}
+
+func (h *APIHandler) handleClusterMetrics(w http.ResponseWriter, r *http.Request) {
+	nodes, err := h.store.GetActiveNodes()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	files, err := h.store.ListFiles("")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	var totalBytes int
+	for _, f := range files {
+		totalBytes += int(f.Size)
+	}
+
+	var totalCapacity int64
+	var totalUsed int64
+	for _, n := range nodes {
+		totalCapacity += n.Capacity
+		totalUsed += n.UsedBytes
+	}
+
+	metrics := ClusterMetrics{
+		TotalFiles:        len(files),
+		TotalBytes:        totalBytes,
+		TotalCapacity:     totalCapacity,
+		TotalUsed:         totalUsed,
+		ActiveNodes:       len(nodes),
+		ReplicationFactor: 3,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(metrics)
 }
 
 func (h *APIHandler) handleListFiles(w http.ResponseWriter, r *http.Request) {
