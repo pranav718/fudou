@@ -1,6 +1,6 @@
 # fudou
 
-a high-performance, fault-tolerant distributed backup system, content-addressable storage engine, and real-time cluster telemetry dashboard built in raw go from first principles. client-side aes-256-gcm authenticated encryption, sha-256 integrity verification, stream chunking, n-way redundant replication, and automated self-healing failover across storage nodes.
+a fast, zero-dependency distributed backup system and storage cluster built from scratch in go. files are sliced into streams, encrypted client-side with aes-256-gcm, and scattered across independent storage nodes with 3x replication. if a node drops offline, fudou detects the heartbeat loss and heals the cluster automatically.
 
 ---
 
@@ -40,51 +40,90 @@ a high-performance, fault-tolerant distributed backup system, content-addressabl
 
 ## features
 
-- zero external dependencies in core backend: pure go standard library implementation utilizing standard net/http, crypto/aes, crypto/cipher, crypto/sha256, and sync primitives.
-- stream chunking: fixed-size stream segmentation (default 1MB chunks) allowing arbitrary file sizes to be streamed, hashed, and distributed without high memory overhead.
-- zero-knowledge client encryption: each upload generates a cryptographically random 256-bit encryption key and unique 96-bit nonces per chunk using aes-256-gcm authenticated encryption.
-- tamper-evident integrity verification: sha-256 checksums are calculated on raw byte streams before encryption and verified post-reassembly upon restore.
-- n-way redundant replication: distributor allocates each chunk across multiple storage nodes (configurable replication factor, default 3x) targeting least-loaded nodes.
-- automated self-healing failover: background monitor polls node health every 10 seconds, identifies under-replicated chunks when nodes go offline, and replicates missing chunks from healthy nodes to active nodes.
-- independent storage node daemons: lightweight node daemons maintain isolated disk stores, enforce capacity quotas, and beacon periodic heartbeats to the coordinator.
-- token authentication: hmac-sha256 signed bearer token service for secure access control.
-- full-stack modern web dashboard: next.js 15 app with real-time cluster health topology, capacity gauges, drag-and-drop file uploader, decryption key modal, and one-click restore.
-- multi-node docker compose orchestration: single-command deployment spinning up the coordinator alongside 3 isolated storage nodes.
+- zero external dependencies in the backend: built entirely on the go standard library with net/http, crypto/aes, crypto/cipher, crypto/sha256, and sync primitives.
+- stream-based fixed chunking: files are segmented into fixed 1MB chunks on the fly without buffering entire files in memory, keeping ram usage low regardless of file size.
+- zero-knowledge client encryption: every file upload generates a unique 256-bit encryption key and 96-bit nonces per chunk with aes-256-gcm. the server never holds your raw plaintext or unencrypted chunks.
+- sha-256 checksum verification: cryptographic digests are computed on raw streams before chunking and re-verified byte-by-byte upon restore to catch silent data corruption or tampering.
+- n-way replication: every chunk is copied across multiple storage nodes (3x by default) using a least-loaded placement strategy that prioritizes nodes with the most free capacity.
+- self-healing cluster: a background worker audits chunk replicas every 10 seconds. if a storage node stops sending heartbeats, missing chunks are automatically re-replicated to healthy nodes.
+- independent storage daemons: nodes run as standalone http services with isolated disk directories, atomic writes, and periodic heartbeat beacons.
+- hmac-sha256 token authentication: signed bearer tokens protect api endpoints and allow role-based authorization.
+- modern web dashboard: built with next.js 15, react 19, and typescript, giving you live node health visualization, cluster disk usage meters, drag-and-drop uploads, and key-based restore modals.
+- docker compose ready: launch the coordinator and 3 storage nodes in containers with a single command.
 
 ---
 
 ## architecture
 
-```text
-[ Client / Web Dashboard / CLI ]
-               |
-               v (HTTP / REST API)
-     +-------------------+
-     |    COORDINATOR    | <----+ Background Self-Healing Worker
-     |      (:8080)      | <----+ In-Memory / File Metadata Store
-     +-------------------+
-        |       |       |
-   Chunk 0  Chunk 1  Chunk 2  (N-way Replication)
-        |       |       |
-        v       v       v
-     +-----+ +-----+ +-----+
-     |Node1| |Node2| |Node3|
-     |:9001| |:9002| |:9003|
-     +-----+ +-----+ +-----+
+fudou splits work between a central coordinator and an arbitrary number of lightweight storage nodes. the coordinator handles client traffic, metadata tracking, encryption, and cluster balancing, while nodes simply store and serve encrypted chunk files.
+
+```mermaid
+flowchart TD
+    subgraph Clients ["Ingress Layer"]
+        client["Web Dashboard / CLI / REST Client"]
+    end
+
+    subgraph ControlPlane ["Coordinator (:8080)"]
+        api["HTTP API & Auth Middleware"]
+        pipeline["Backup & Restore Pipelines"]
+        dist["Least-Loaded Distributor"]
+        healer["Background Self-Healing Engine"]
+        meta[("Atomic Metadata Store")]
+
+        api --> pipeline
+        pipeline --> dist
+        pipeline --> meta
+        healer --> meta
+        healer --> dist
+    end
+
+    subgraph StorageCluster ["Storage Cluster"]
+        node1["Storage Node 1 (:9001)"]
+        node2["Storage Node 2 (:9002)"]
+        node3["Storage Node 3 (:9003)"]
+    end
+
+    client -->|"HTTP Multipart / REST"| api
+    dist -->|"Replicate Chunks"| node1
+    dist -->|"Replicate Chunks"| node2
+    dist -->|"Replicate Chunks"| node3
+
+    node1 -.->|"Heartbeat (every 5s)"| api
+    node2 -.->|"Heartbeat (every 5s)"| api
+    node3 -.->|"Heartbeat (every 5s)"| api
 ```
 
-the coordinator acts as the central ingress gateway, metadata manager, and replication orchestrator:
+### data flow lifecycle
 
-1. backup pipeline: receives incoming multipart file streams, calculates overall sha-256 checksums, segments the payload into fixed chunks, encrypts each chunk with aes-256-gcm, selects least-loaded active nodes, and replicates chunks in parallel.
-2. restore pipeline: looks up chunk metadata, queries healthy storage nodes in parallel, decrypts chunk payloads, reassembles chunks in deterministic order, verifies the sha-256 checksum, and streams the restored file to the client.
-3. self-healing monitor: runs continuously in the background, checks node heartbeat freshness, detects dropped nodes, calculates replica deficits, and rebalances chunks to surviving nodes.
-4. storage nodes: run independently on distinct ports or hosts, persist encrypted chunks to dedicated disk paths, and beacon status payloads every 5 seconds.
+the diagrams below outline how raw data moves from upload through encrypted storage to verified restore.
+
+```mermaid
+flowchart LR
+    subgraph BackupFlow ["Backup Pipeline"]
+        raw1["File Stream"] --> hash1["SHA-256 Checksum"]
+        raw1 --> chunk1["Fixed Chunker (1MB Chunks)"]
+        chunk1 --> enc1["AES-256-GCM (Random Nonce)"]
+        enc1 --> rep1["Transfer Engine (Goroutines)"]
+    end
+
+    subgraph Disks ["Node Storage"]
+        rep1 -->|"Parallel HTTP PUT"| files[("Encrypted Chunk Files")]
+    end
+
+    subgraph RestoreFlow ["Restore Pipeline"]
+        files -->|"Parallel HTTP GET"| fetch["Fetch Replica Chunks"]
+        fetch --> dec["AES-256-GCM Decrypt"]
+        dec --> assemble["Ordered Reassembler"]
+        assemble --> verify["SHA-256 Checksum Verification"]
+        verify --> out["Restored File Stream"]
+    end
+```
 
 ---
 
 ## technologies and stack
 
-- language: go 1.24+ (standard library: net/http, crypto/aes, crypto/cipher, crypto/rand, crypto/sha256, crypto/hmac, sync, os, io)
+- backend: go 1.24+ (standard library only: net/http, crypto/aes, crypto/cipher, crypto/rand, crypto/sha256, crypto/hmac, sync, os, io)
 - frontend: next.js 15, react 19, typescript, lucide-react, vanilla css tokens
 - storage engine: content-addressable local disk storage with atomic write operations
 - containers: docker, docker compose
@@ -94,17 +133,17 @@ the coordinator acts as the central ingress gateway, metadata manager, and repli
 
 ## live cluster dashboard and web ui
 
-fudou includes a responsive management dashboard built with next.js 15 and react 19 for visualizing cluster topology and executing zero-knowledge backup and restore operations.
+the web dashboard gives you complete visibility into the storage cluster, lets you manage file backups, and handles client-side decryption key entry for restoring files.
 
 ### dashboard capabilities
 
-- real-time cluster metrics: displays total files backed up, total bytes stored, aggregate cluster disk capacity, active node count, and default replication factor.
-- cluster topology view: visualizes every registered storage node, including node identifier, network address, status badge (online/offline), used storage bytes, and total capacity progress bars.
-- drag-and-drop backup interface: upload files of any type with automatic chunking and aes-256-gcm key generation.
-- client-side key modal: exposes the generated 64-character hex encryption key upon backup completion, emphasizing zero-knowledge architecture.
-- file catalog: tabular view displaying file name, mime type, size, sha-256 checksum preview, total chunk count, and upload timestamp.
-- secure restore flow: download prompt requiring the user to provide their 64-character hex decryption key to authorize streaming decryption and checksum validation.
-- distributed deletion: deletes file metadata from the coordinator and cascades chunk deletion requests to all storing nodes.
+- cluster metrics: tracks total backed-up files, total raw bytes stored, aggregated disk capacity across all active nodes, and replication status.
+- node topology: visual cards for each storage node showing network address, online/offline status, used disk space, and total storage limits.
+- drag-and-drop uploads: drop any file into the browser to trigger stream chunking, encryption, and multi-node distribution.
+- zero-knowledge key modal: immediately after upload, the ui generates and presents your 64-character hex master key. you keep this key to decrypt your file later.
+- file catalog: inspect stored files, original file names, mime types, sizes, sha-256 checksums, and chunk counts.
+- authenticated download: click restore on any file, enter the matching 64-character hex key, and stream the decrypted file straight to your machine.
+- cascading deletion: removing a file purges metadata from the coordinator and cascades deletion calls to purge chunks across all storage nodes.
 
 ### how to run the web dashboard
 
@@ -114,9 +153,9 @@ npm install
 npm run dev
 ```
 
-the web interface is accessible at `http://localhost:3000`.
+open your browser and visit `http://localhost:3000`.
 
-to point the frontend to a custom coordinator host or port, configure the environment variable:
+if your coordinator runs on a custom port or remote server, point the dashboard to it with an environment variable:
 
 ```bash
 NEXT_PUBLIC_COORDINATOR_URL=http://localhost:8080 npm run dev
@@ -124,11 +163,11 @@ NEXT_PUBLIC_COORDINATOR_URL=http://localhost:8080 npm run dev
 
 ### using the web dashboard
 
-1. navigate to `http://localhost:3000/dashboard` to access file backup and catalog management.
-2. drag a file into the upload zone or click to select a file from your system.
-3. upon upload, copy and safely store the generated 64-character hex key shown in the success dialog.
-4. to restore a file, click the download icon next to the record and paste your hex key.
-5. navigate to `http://localhost:3000/admin` to inspect real-time storage node allocations, node health, and cluster storage utilization.
+1. open `http://localhost:3000/dashboard` to access the main file manager.
+2. drag a file into the upload zone or click to browse.
+3. when the upload finishes, copy the 64-character hex key shown in the dialog. store this somewhere safe because the coordinator does not keep this key.
+4. to restore, click the download button next to the file and paste your key. fudou verifies the sha-256 hash before handing you the file.
+5. visit `http://localhost:3000/admin` to see live node heartbeat signals, node capacities, and cluster-wide metrics.
 
 ---
 
@@ -136,13 +175,13 @@ NEXT_PUBLIC_COORDINATOR_URL=http://localhost:8080 npm run dev
 
 ### 1. build binaries from source
 
-compile both the coordinator and storage node binaries into the local `bin/` directory:
+compile the coordinator and node daemons using the makefile:
 
 ```bash
 make build
 ```
 
-or build directly using the go compiler:
+or build directly with go:
 
 ```bash
 go build -o bin/coordinator ./cmd/coordinator
@@ -151,13 +190,13 @@ go build -o bin/node ./cmd/node
 
 ### 2. run the coordinator service
 
-start the coordinator daemon listening on port 8080:
+start the coordinator with default settings on port 8080:
 
 ```bash
 make run-coordinator
 ```
 
-or start manually with custom parameters:
+or run with custom environment variables:
 
 ```bash
 PORT=8080 REPLICATION_FACTOR=3 METADATA_PATH=./data/coordinator/meta.json AUTH_SECRET=dev-secret go run ./cmd/coordinator
@@ -165,7 +204,7 @@ PORT=8080 REPLICATION_FACTOR=3 METADATA_PATH=./data/coordinator/meta.json AUTH_S
 
 ### 3. run storage node daemons
 
-in separate terminal sessions, start three independent storage node daemons:
+open three separate terminal tabs to run three isolated storage nodes:
 
 ```bash
 make run-node1
@@ -179,7 +218,7 @@ make run-node2
 make run-node3
 ```
 
-or start individual nodes manually with environment variables:
+or start them manually with distinct ports and data folders:
 
 ```bash
 NODE_ID=node-1 PORT=9001 STORAGE_DIR=./data/node1 COORDINATOR_URL=http://localhost:8080 go run ./cmd/node
@@ -187,23 +226,23 @@ NODE_ID=node-2 PORT=9002 STORAGE_DIR=./data/node2 COORDINATOR_URL=http://localho
 NODE_ID=node-3 PORT=9003 STORAGE_DIR=./data/node3 COORDINATOR_URL=http://localhost:8080 go run ./cmd/node
 ```
 
-each node registers with the coordinator immediately and dispatches recurring heartbeats.
+nodes automatically register with the coordinator on startup and send heartbeats every 5 seconds.
 
 ### 4. launch multi-node cluster with docker compose
 
-to spin up the entire cluster (coordinator and 3 storage nodes) in isolated containers with a single command:
+to spin up the entire setup (coordinator plus three storage nodes) in isolated containers:
 
 ```bash
 make docker-up
 ```
 
-or using docker compose directly:
+or with docker compose:
 
 ```bash
 docker compose -f deploy/docker-compose.yml up --build
 ```
 
-to stop and remove all cluster containers:
+to shut down the cluster and clean up containers:
 
 ```bash
 make docker-down
@@ -305,7 +344,7 @@ sample response:
 
 ### download and restore a file
 
-pass the file identifier and the encryption key in the query parameter to stream and decrypt the restored file:
+pass the file id and the 64-character hex key in query parameters to stream the decrypted payload:
 
 ```bash
 curl -X GET "http://localhost:8080/api/files/3fa85f64-5717-4562-b3fc-2c963f66afa6/download?key=a1b2c3d4e5f60718293a4b5c6d7e8f90123456789abcdef0123456789abcdef0" \
@@ -459,50 +498,50 @@ fudou/
 
 ### stream chunking and segmentation
 
-files are processed as streams rather than buffered wholly in memory. the `FixedChunker` reads standard `io.Reader` streams in chunks of 1MB (1,048,576 bytes). each chunk receives a sequential index, an independent byte count, and a deterministic content-addressable chunk identifier derived from its sequential position and content.
+fudou never loads whole files into ram. the `FixedChunker` reads incoming `io.Reader` streams in 1MB chunks (1,048,576 bytes). each chunk gets a deterministic sequence index, byte length, and unique identifier. if an upload fails halfway through, only unfinished chunks need retrying.
 
 ### aes-256-gcm authenticated encryption
 
-before leaving the coordinator, every chunk is encrypted using standard galois/counter mode (gcm) with 256-bit keys:
+chunks are encrypted before they ever leave the coordinator:
 
-1. a unique 256-bit encryption key is generated for the upload session using cryptographically secure random bytes from `crypto/rand`.
-2. for each chunk, a unique 96-bit (12-byte) initialization vector (nonce) is generated.
-3. the chunk payload is encrypted and sealed with an authenticated 128-bit tag. the nonce is prepended directly to the ciphertext chunk payload, ensuring each chunk is self-describing for decryption when the master key is provided.
-4. raw content is never stored unencrypted on any storage node.
+1. a fresh 256-bit key is generated for every uploaded file using `crypto/rand`.
+2. each chunk gets its own 96-bit (12-byte) initialization vector (nonce).
+3. the chunk payload is encrypted and sealed with an authenticated 128-bit tag. the nonce is attached to the ciphertext chunk so the chunk is self-contained when decrypted with the master key.
+4. storage nodes receive and store only ciphertext. they never see original filenames, metadata, or unencrypted contents.
 
 ### least-loaded n-way replication
 
-the coordinator tracks the storage usage of all active nodes through their periodic heartbeats:
+the coordinator constantly tracks how much disk space each node has used via heartbeats:
 
-1. for every chunk, the `Distributor` sorts all healthy, online storage nodes by `used_bytes` in ascending order.
-2. the top `N` nodes (where `N` is the configured `REPLICATION_FACTOR`, default 3) are assigned as replica targets for that chunk.
-3. the `ChunkTransferEngine` dispatches concurrent http put requests to all selected nodes via goroutines.
-4. if any target node fails, the upload aborts or re-routes to maintain the target replication factor.
+1. when a chunk is ready for placement, the `Distributor` sorts active, healthy storage nodes by `used_bytes` in ascending order.
+2. the top `N` nodes (where `N` is `REPLICATION_FACTOR`, default 3) are chosen to receive the chunk.
+3. the `ChunkTransferEngine` pushes the chunk across all selected nodes concurrently using goroutines.
+4. if a target node rejects the chunk or times out, the transfer falls over to the next healthiest candidate.
 
 ### automated self-healing engine
 
-node failures are handled autonomously without human intervention:
+hardware failures happen. fudou fixes under-replicated data in the background:
 
-1. every 5 seconds, each storage node posts a heartbeat to `/api/nodes/heartbeat` with its current byte count and status.
-2. the coordinator records the timestamp of each heartbeat.
-3. a background self-healing worker runs every 10 seconds. if a node has not reported within 15 seconds, it is marked as offline.
-4. the self-healing worker scans all stored file chunks. any chunk residing on an offline node experiences a replica deficit.
-5. the engine fetches the chunk from a surviving healthy replica node and transmits a copy to another healthy online node that does not yet hold the chunk.
-6. the file metadata is updated atomically on disk to reflect the new replica locations.
+1. storage nodes post a heartbeat to `/api/nodes/heartbeat` every 5 seconds with their current byte count and status.
+2. the coordinator logs the last-seen time of every node.
+3. a self-healing worker runs every 10 seconds. if a node misses heartbeats for more than 15 seconds, it is flagged as offline.
+4. the worker reviews all chunk mappings. any chunk that lived on the dead node now has fewer than the required replicas.
+5. fudou grabs the missing chunk from a surviving healthy replica node and sends a fresh copy to another active node.
+6. the coordinator updates the metadata store atomically so the new node is officially registered as a replica holder.
 
 ---
 
 ## testing
 
-the codebase includes unit and integration tests across all internal packages covering crypto verification, chunk boundary conditions, out-of-order reassembly, concurrent transfers, heartbeat beaconing, and self-healing.
+the test suite covers unit tests and integration pipelines across all internal packages: crypto roundtrips, chunk boundary conditions, out-of-order reassembly, concurrent transfers, heartbeat beaconing, and self-healing.
 
-to execute the complete test suite:
+to run all tests:
 
 ```bash
 make test
 ```
 
-or run tests directly with coverage details:
+or run directly with the race detector enabled:
 
 ```bash
 go test -v -race ./...
@@ -512,4 +551,4 @@ go test -v -race ./...
 
 ## license
 
-mit license. inspect `LICENSE` or repository headers for copyright terms.
+mit license. see `LICENSE` or repository headers for copyright terms.
