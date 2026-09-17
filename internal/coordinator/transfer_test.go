@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/pranav718/fudou/internal/metadata"
 )
 
 type mockNodeClient struct {
+	mu           sync.RWMutex
 	uploadedData map[string][]byte
 	failNodes    map[string]bool
 }
@@ -22,6 +24,8 @@ func newMockNodeClient() *mockNodeClient {
 }
 
 func (m *mockNodeClient) UploadChunk(ctx context.Context, address string, chunkID string, data []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.failNodes[address] {
 		return errors.New("node down")
 	}
@@ -30,6 +34,8 @@ func (m *mockNodeClient) UploadChunk(ctx context.Context, address string, chunkI
 }
 
 func (m *mockNodeClient) DownloadChunk(ctx context.Context, address string, chunkID string) ([]byte, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	if m.failNodes[address] {
 		return nil, errors.New("node down")
 	}
@@ -41,11 +47,15 @@ func (m *mockNodeClient) DownloadChunk(ctx context.Context, address string, chun
 }
 
 func (m *mockNodeClient) DeleteChunk(ctx context.Context, address string, chunkID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	delete(m.uploadedData, address+":"+chunkID)
 	return nil
 }
 
 func (m *mockNodeClient) CheckHealth(ctx context.Context, address string) error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	if m.failNodes[address] {
 		return errors.New("node down")
 	}
