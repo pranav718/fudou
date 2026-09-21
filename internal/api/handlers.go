@@ -17,6 +17,7 @@ type APIHandler struct {
 	store           metadata.Store
 	backupPipeline  *coordinator.BackupPipeline
 	restorePipeline *coordinator.RestorePipeline
+	deletePipeline  *coordinator.DeletePipeline
 }
 
 func NewAPIHandler(
@@ -24,12 +25,14 @@ func NewAPIHandler(
 	store metadata.Store,
 	backup *coordinator.BackupPipeline,
 	restore *coordinator.RestorePipeline,
+	deletePipe *coordinator.DeletePipeline,
 ) *APIHandler {
 	return &APIHandler{
 		authService:     authService,
 		store:           store,
 		backupPipeline:  backup,
 		restorePipeline: restore,
+		deletePipeline:  deletePipe,
 	}
 }
 
@@ -267,7 +270,13 @@ func (h *APIHandler) handleDownloadFile(w http.ResponseWriter, r *http.Request, 
 }
 
 func (h *APIHandler) handleDeleteFile(w http.ResponseWriter, r *http.Request, fileID string) {
-	err := h.store.DeleteFile(fileID)
+	var err error
+	if h.deletePipeline != nil {
+		err = h.deletePipeline.DeleteFile(r.Context(), fileID)
+	} else {
+		err = h.store.DeleteFile(fileID)
+	}
+
 	if err != nil {
 		if errors.Is(err, metadata.ErrFileNotFound) {
 			http.NotFound(w, r)

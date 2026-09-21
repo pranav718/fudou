@@ -61,9 +61,10 @@ func run() error {
 
 	backup := coordinator.NewBackupPipeline(chk, enc, hasher, metaStore, dist, transfer, cfg.ReplicationFactor)
 	restore := coordinator.NewRestorePipeline(ras, enc, hasher, metaStore, transfer)
+	deletePipe := coordinator.NewDeletePipeline(metaStore, client)
 	tokenService := auth.NewTokenService(cfg.AuthSecret, 24*time.Hour)
 
-	apiHandler := api.NewAPIHandler(tokenService, metaStore, backup, restore)
+	apiHandler := api.NewAPIHandler(tokenService, metaStore, backup, restore, deletePipe)
 	handlerWithMiddleware := api.CORSMiddleware(api.LoggingMiddleware(apiHandler))
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

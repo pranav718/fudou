@@ -29,8 +29,9 @@ func setupTestAPIHandler() *APIHandler {
 
 	backup := coordinator.NewBackupPipeline(chk, enc, hasher, store, dist, transfer, 2)
 	restore := coordinator.NewRestorePipeline(ras, enc, hasher, store, transfer)
+	deletePipe := coordinator.NewDeletePipeline(store, client)
 
-	return NewAPIHandler(authService, store, backup, restore)
+	return NewAPIHandler(authService, store, backup, restore, deletePipe)
 }
 
 func TestAPIAuthTokenEndpoint(t *testing.T) {
@@ -98,5 +99,42 @@ func TestAPIListFilesEmpty(t *testing.T) {
 	handler.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200 for files list, got %d", w.Code)
+	}
+}
+
+func TestAPIDeleteFile(t *testing.T) {
+	handler := setupTestAPIHandler()
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/files/non-existent-id", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for missing file delete, got %d", w.Code)
+	}
+
+	testFile := &metadata.FileRecord{
+		ID:        "file-123",
+		UserID:    "user-1",
+		Filename:  "test.txt",
+		MimeType:  "text/plain",
+		Size:      10,
+		Checksum:  "hash123",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	if err := handler.store.SaveFile(testFile); err != nil {
+		t.Fatalf("failed to save test file: %v", err)
+	}
+
+	delReq := httptest.NewRequest(http.MethodDelete, "/api/files/file-123", nil)
+	delW := httptest.NewRecorder()
+	handler.ServeHTTP(delW, delReq)
+	if delW.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 on file delete, got %d", delW.Code)
+	}
+
+	_, err := handler.store.GetFile("file-123")
+	if err == nil {
+		t.Fatalf("expected file to be deleted from store")
 	}
 }
