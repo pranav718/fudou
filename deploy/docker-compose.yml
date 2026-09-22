@@ -24,6 +24,7 @@ services:
     environment:
       - NODE_ID=node-1
       - PORT=9001
+      - NODE_ADDRESS=http://node-1:9001
       - COORDINATOR_URL=http://coordinator:8080
 
   node-2:
@@ -35,6 +36,7 @@ services:
     environment:
       - NODE_ID=node-2
       - PORT=9002
+      - NODE_ADDRESS=http://node-2:9002
       - COORDINATOR_URL=http://coordinator:8080
 
   node-3:
@@ -46,4 +48,5 @@ services:
     environment:
       - NODE_ID=node-3
       - PORT=9003
+      - NODE_ADDRESS=http://node-3:9003
       - COORDINATOR_URL=http://coordinator:8080

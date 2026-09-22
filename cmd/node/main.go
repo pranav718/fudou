@@ -31,6 +31,9 @@ func run() error {
 			cfg.Port = p
 		}
 	}
+	if addr := os.Getenv("NODE_ADDRESS"); addr != "" {
+		cfg.Address = addr
+	}
 	if storageDir := os.Getenv("STORAGE_DIR"); storageDir != "" {
 		cfg.StorageDirPath = storageDir
 	}

@@ -25,7 +25,11 @@ func NewServer(cfg config.NodeConfig, store StorageNode) *Server {
 		Handler: handler,
 	}
 
-	nodeAddress := fmt.Sprintf("http://localhost:%d", cfg.Port)
+	nodeAddress := cfg.Address
+	if nodeAddress == "" {
+		nodeAddress = fmt.Sprintf("http://localhost:%d", cfg.Port)
+	}
+
 	heartbeat := NewHeartbeatSender(
 		cfg.NodeID,
 		nodeAddress,

@@ -8,11 +8,12 @@ type CoordinatorConfig struct {
 }
 
 type NodeConfig struct {
-	NodeID          string
-	Port            int
-	StorageDirPath  string
-	CoordinatorURL  string
-	HeartbeatSec    int
+	NodeID         string
+	Port           int
+	Address        string
+	StorageDirPath string
+	CoordinatorURL string
+	HeartbeatSec   int
 }
 
 func DefaultCoordinatorConfig() CoordinatorConfig {
@@ -28,6 +29,7 @@ func DefaultNodeConfig() NodeConfig {
 	return NodeConfig{
 		NodeID:         "node-1",
 		Port:           9001,
+		Address:        "",
 		StorageDirPath: "./data/chunks",
 		CoordinatorURL: "http://localhost:8080",
 		HeartbeatSec:   5,

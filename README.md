@@ -265,6 +265,7 @@ make docker-down
 | :--- | :--- | :--- | :--- |
 | `NODE_ID` | string | `node-<timestamp>` | unique identifier for the storage node daemon |
 | `PORT` | integer | `9001` | tcp port for the storage node daemon http server |
+| `NODE_ADDRESS` | string | `http://localhost:<PORT>` | advertised reachable address sent in node heartbeats |
 | `STORAGE_DIR` | string | `./data/chunks` | local filesystem directory for storing encrypted chunks |
 | `COORDINATOR_URL` | string | `http://localhost:8080` | base url of the active coordinator instance |
 | `HEARTBEAT_SEC` | integer | `5` | interval in seconds between outbound heartbeat signals |
