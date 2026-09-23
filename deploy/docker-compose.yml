@@ -10,6 +10,9 @@ services:
     environment:
       - PORT=8080
       - REPLICATION_FACTOR=3
+      - METADATA_PATH=/data/metadata.json
+    volumes:
+      - coordinator-data:/data
     depends_on:
       - node-1
       - node-2
@@ -26,6 +29,9 @@ services:
       - PORT=9001
       - NODE_ADDRESS=http://node-1:9001
       - COORDINATOR_URL=http://coordinator:8080
+      - STORAGE_DIR=/data/chunks
+    volumes:
+      - node1-data:/data/chunks
 
   node-2:
     build:
@@ -38,6 +44,9 @@ services:
       - PORT=9002
       - NODE_ADDRESS=http://node-2:9002
       - COORDINATOR_URL=http://coordinator:8080
+      - STORAGE_DIR=/data/chunks
+    volumes:
+      - node2-data:/data/chunks
 
   node-3:
     build:
@@ -50,3 +59,12 @@ services:
       - PORT=9003
       - NODE_ADDRESS=http://node-3:9003
       - COORDINATOR_URL=http://coordinator:8080
+      - STORAGE_DIR=/data/chunks
+    volumes:
+      - node3-data:/data/chunks
+
+volumes:
+  coordinator-data:
+  node1-data:
+  node2-data:
+  node3-data:
