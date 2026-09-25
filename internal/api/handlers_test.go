@@ -31,7 +31,7 @@ func setupTestAPIHandler() *APIHandler {
 	restore := coordinator.NewRestorePipeline(ras, enc, hasher, store, transfer)
 	deletePipe := coordinator.NewDeletePipeline(store, client)
 
-	return NewAPIHandler(authService, store, backup, restore, deletePipe)
+	return NewAPIHandler(authService, store, backup, restore, deletePipe, 2)
 }
 
 func TestAPIAuthTokenEndpoint(t *testing.T) {

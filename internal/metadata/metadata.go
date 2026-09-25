@@ -44,4 +44,5 @@ type Store interface {
 	RegisterNode(node *NodeRecord) error
 	UpdateNodeHeartbeat(nodeID string) error
 	GetActiveNodes() ([]NodeRecord, error)
+	GetAllNodes() ([]NodeRecord, error)
 }

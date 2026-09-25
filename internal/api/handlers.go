@@ -13,11 +13,12 @@ import (
 )
 
 type APIHandler struct {
-	authService     *auth.TokenService
-	store           metadata.Store
-	backupPipeline  *coordinator.BackupPipeline
-	restorePipeline *coordinator.RestorePipeline
-	deletePipeline  *coordinator.DeletePipeline
+	authService       *auth.TokenService
+	store             metadata.Store
+	backupPipeline    *coordinator.BackupPipeline
+	restorePipeline   *coordinator.RestorePipeline
+	deletePipeline    *coordinator.DeletePipeline
+	replicationFactor int
 }
 
 func NewAPIHandler(
@@ -26,13 +27,18 @@ func NewAPIHandler(
 	backup *coordinator.BackupPipeline,
 	restore *coordinator.RestorePipeline,
 	deletePipe *coordinator.DeletePipeline,
+	replicationFactor int,
 ) *APIHandler {
+	if replicationFactor <= 0 {
+		replicationFactor = 3
+	}
 	return &APIHandler{
-		authService:     authService,
-		store:           store,
-		backupPipeline:  backup,
-		restorePipeline: restore,
-		deletePipeline:  deletePipe,
+		authService:       authService,
+		store:             store,
+		backupPipeline:    backup,
+		restorePipeline:   restore,
+		deletePipeline:    deletePipe,
+		replicationFactor: replicationFactor,
 	}
 }
 
@@ -147,7 +153,7 @@ func (h *APIHandler) handleNodeHeartbeat(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *APIHandler) handleListNodes(w http.ResponseWriter, r *http.Request) {
-	nodes, err := h.store.GetActiveNodes()
+	nodes, err := h.store.GetAllNodes()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -158,7 +164,7 @@ func (h *APIHandler) handleListNodes(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *APIHandler) handleClusterMetrics(w http.ResponseWriter, r *http.Request) {
-	nodes, err := h.store.GetActiveNodes()
+	allNodes, err := h.store.GetAllNodes()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -177,9 +183,13 @@ func (h *APIHandler) handleClusterMetrics(w http.ResponseWriter, r *http.Request
 
 	var totalCapacity int64
 	var totalUsed int64
-	for _, n := range nodes {
+	var activeCount int
+	for _, n := range allNodes {
 		totalCapacity += n.Capacity
 		totalUsed += n.UsedBytes
+		if n.Status == "online" {
+			activeCount++
+		}
 	}
 
 	metrics := ClusterMetrics{
@@ -187,8 +197,8 @@ func (h *APIHandler) handleClusterMetrics(w http.ResponseWriter, r *http.Request
 		TotalBytes:        totalBytes,
 		TotalCapacity:     totalCapacity,
 		TotalUsed:         totalUsed,
-		ActiveNodes:       len(nodes),
-		ReplicationFactor: 3,
+		ActiveNodes:       activeCount,
+		ReplicationFactor: h.replicationFactor,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

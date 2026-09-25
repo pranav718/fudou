@@ -147,3 +147,14 @@ func (m *MemoryStore) GetActiveNodes() ([]NodeRecord, error) {
 	}
 	return active, nil
 }
+
+func (m *MemoryStore) GetAllNodes() ([]NodeRecord, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	all := make([]NodeRecord, 0, len(m.nodes))
+	for _, node := range m.nodes {
+		all = append(all, node)
+	}
+	return all, nil
+}

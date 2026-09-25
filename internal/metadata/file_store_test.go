@@ -78,4 +78,9 @@ func TestFileStorePersistence(t *testing.T) {
 	if err != nil || len(activeNodes) != 1 {
 		t.Fatalf("expected 1 active node, got %d", len(activeNodes))
 	}
+
+	allNodes, err := store2.GetAllNodes()
+	if err != nil || len(allNodes) != 1 {
+		t.Fatalf("expected 1 total node from GetAllNodes, got %d", len(allNodes))
+	}
 }

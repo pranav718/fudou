@@ -125,6 +125,11 @@ func TestMemoryStoreNodeManagement(t *testing.T) {
 		t.Fatalf("expected 1 active node, got %d", len(active))
 	}
 
+	all, err := store.GetAllNodes()
+	if err != nil || len(all) != 2 {
+		t.Fatalf("expected 2 total nodes from GetAllNodes, got %d", len(all))
+	}
+
 	err = store.UpdateNodeHeartbeat("node-2")
 	if err != nil {
 		t.Fatalf("failed to update heartbeat: %v", err)

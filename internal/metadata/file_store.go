@@ -222,3 +222,14 @@ func (s *FileStore) GetActiveNodes() ([]NodeRecord, error) {
 	}
 	return active, nil
 }
+
+func (s *FileStore) GetAllNodes() ([]NodeRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	all := make([]NodeRecord, 0, len(s.nodes))
+	for _, node := range s.nodes {
+		all = append(all, node)
+	}
+	return all, nil
+}

@@ -22,6 +22,15 @@ func TestAPIClusterMetrics(t *testing.T) {
 		LastSeen:  time.Now(),
 	})
 
+	handler.store.RegisterNode(&metadata.NodeRecord{
+		ID:        "node-metric-2",
+		Address:   "http://localhost:9002",
+		Status:    "offline",
+		Capacity:  1000000,
+		UsedBytes: 200000,
+		LastSeen:  time.Now().Add(-1 * time.Hour),
+	})
+
 	handler.store.SaveFile(&metadata.FileRecord{
 		ID:       "file-metric-1",
 		Filename: "archive.tar",
@@ -47,10 +56,13 @@ func TestAPIClusterMetrics(t *testing.T) {
 	if metrics.ActiveNodes != 1 {
 		t.Fatalf("expected 1 active node, got %d", metrics.ActiveNodes)
 	}
-	if metrics.TotalCapacity != 2000000 {
-		t.Fatalf("expected 2000000 capacity, got %d", metrics.TotalCapacity)
+	if metrics.TotalCapacity != 3000000 {
+		t.Fatalf("expected 3000000 capacity, got %d", metrics.TotalCapacity)
 	}
-	if metrics.TotalUsed != 500000 {
-		t.Fatalf("expected 500000 used, got %d", metrics.TotalUsed)
+	if metrics.TotalUsed != 700000 {
+		t.Fatalf("expected 700000 used, got %d", metrics.TotalUsed)
+	}
+	if metrics.ReplicationFactor != 2 {
+		t.Fatalf("expected replication factor 2, got %d", metrics.ReplicationFactor)
 	}
 }

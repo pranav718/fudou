@@ -64,7 +64,7 @@ func run() error {
 	deletePipe := coordinator.NewDeletePipeline(metaStore, client)
 	tokenService := auth.NewTokenService(cfg.AuthSecret, 24*time.Hour)
 
-	apiHandler := api.NewAPIHandler(tokenService, metaStore, backup, restore, deletePipe)
+	apiHandler := api.NewAPIHandler(tokenService, metaStore, backup, restore, deletePipe, cfg.ReplicationFactor)
 	handlerWithMiddleware := api.CORSMiddleware(api.LoggingMiddleware(apiHandler))
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
