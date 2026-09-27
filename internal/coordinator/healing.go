@@ -38,18 +38,20 @@ func NewSelfHealingEngine(
 }
 
 func (h *SelfHealingEngine) RunHealingCycle(ctx context.Context) (int, error) {
-	activeNodes, err := h.store.GetActiveNodes()
+	nodes, err := h.store.GetAllNodes()
 	if err != nil {
 		return 0, err
 	}
 
 	now := time.Now()
 	var healthyNodes []metadata.NodeRecord
-	for _, n := range activeNodes {
+	for _, n := range nodes {
 		if now.Sub(n.LastSeen) > h.heartbeatTimeout {
-			n.Status = "offline"
-			h.store.RegisterNode(&n)
-		} else {
+			if n.Status != "offline" {
+				n.Status = "offline"
+				h.store.RegisterNode(&n)
+			}
+		} else if n.Status == "online" {
 			healthyNodes = append(healthyNodes, n)
 		}
 	}

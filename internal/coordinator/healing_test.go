@@ -77,4 +77,22 @@ func TestSelfHealingCycle(t *testing.T) {
 	if !hasNode2 {
 		t.Fatalf("chunk should have been replicated to node-2, found: %v", locations[0].NodeIDs)
 	}
+
+	nodes, err := store.GetAllNodes()
+	if err != nil {
+		t.Fatalf("failed to get nodes: %v", err)
+	}
+	for _, n := range nodes {
+		if n.ID == "node-3" && n.Status != "offline" {
+			t.Fatalf("expected node-3 to have status offline, got %s", n.Status)
+		}
+	}
+
+	countSecond, err := engine.RunHealingCycle(context.Background())
+	if err != nil {
+		t.Fatalf("second healing cycle failed: %v", err)
+	}
+	if countSecond != 0 {
+		t.Fatalf("expected 0 chunks to be healed in second cycle, got %d", countSecond)
+	}
 }
