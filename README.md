@@ -412,6 +412,7 @@ fudou/
 ├── deploy/
 │   ├── coordinator.Dockerfile    multi-stage alpine container for coordinator
 │   ├── node.Dockerfile           multi-stage alpine container for storage node
+│   ├── web.Dockerfile            multi-stage alpine container for web dashboard
 │   └── docker-compose.yml        multi-node cluster orchestration
 ├── internal/
 │   ├── api/

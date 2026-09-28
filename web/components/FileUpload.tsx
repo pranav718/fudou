@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import { uploadFile, BackupResult } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
 
@@ -10,6 +10,7 @@ interface FileUploadProps {
 
 export default function FileUpload({ onUploadSuccess }: FileUploadProps) {
   const { userId } = useAuth();
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -35,6 +36,9 @@ export default function FileUpload({ onUploadSuccess }: FileUploadProps) {
       const res = await uploadFile(file, userId);
       setResult(res);
       setFile(null);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
       onUploadSuccess();
     } catch (err: any) {
       setError(err.message || "Upload failed");
@@ -57,6 +61,7 @@ export default function FileUpload({ onUploadSuccess }: FileUploadProps) {
 
       <form onSubmit={handleUpload} style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
         <input
+          ref={fileInputRef}
           type="file"
           onChange={handleFileChange}
           style={{
