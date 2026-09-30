@@ -138,3 +138,29 @@ func TestAPIDeleteFile(t *testing.T) {
 		t.Fatalf("expected file to be deleted from store")
 	}
 }
+
+func TestAPIDownloadValidation(t *testing.T) {
+	handler := setupTestAPIHandler()
+
+	reqNoKey := httptest.NewRequest(http.MethodGet, "/api/files/test-id/download", nil)
+	wNoKey := httptest.NewRecorder()
+	handler.ServeHTTP(wNoKey, reqNoKey)
+	if wNoKey.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for missing key, got %d", wNoKey.Code)
+	}
+
+	reqShortKey := httptest.NewRequest(http.MethodGet, "/api/files/test-id/download?key=1234abcd", nil)
+	wShortKey := httptest.NewRecorder()
+	handler.ServeHTTP(wShortKey, reqShortKey)
+	if wShortKey.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for short key, got %d", wShortKey.Code)
+	}
+
+	validKey64 := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	reqMissingFile := httptest.NewRequest(http.MethodGet, "/api/files/non-existent-id/download?key="+validKey64, nil)
+	wMissingFile := httptest.NewRecorder()
+	handler.ServeHTTP(wMissingFile, reqMissingFile)
+	if wMissingFile.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for missing file, got %d", wMissingFile.Code)
+	}
+}

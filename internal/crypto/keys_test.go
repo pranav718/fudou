@@ -55,3 +55,15 @@ func TestGenerateNonce(t *testing.T) {
 		t.Fatalf("expected nonce size %d, got %d", GCMNonceSize, len(nonce))
 	}
 }
+
+func TestDecodeHexKeyInvalid(t *testing.T) {
+	_, err := DecodeHexKey("not-a-hex-string")
+	if err == nil {
+		t.Fatalf("expected error for malformed hex string")
+	}
+
+	_, err = DecodeHexKey("abcd")
+	if err != ErrInvalidKeySize {
+		t.Fatalf("expected ErrInvalidKeySize for short key, got %v", err)
+	}
+}

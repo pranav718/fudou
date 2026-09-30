@@ -36,5 +36,12 @@ func GenerateNonce() ([]byte, error) {
 }
 
 func DecodeHexKey(hexStr string) ([]byte, error) {
-	return hex.DecodeString(hexStr)
+	key, err := hex.DecodeString(hexStr)
+	if err != nil {
+		return nil, err
+	}
+	if len(key) != AES256KeySize {
+		return nil, ErrInvalidKeySize
+	}
+	return key, nil
 }

@@ -8,6 +8,7 @@ import (
 
 	"github.com/pranav718/fudou/internal/auth"
 	"github.com/pranav718/fudou/internal/coordinator"
+	"github.com/pranav718/fudou/internal/crypto"
 	"github.com/pranav718/fudou/internal/metadata"
 	"github.com/pranav718/fudou/internal/node"
 )
@@ -256,6 +257,11 @@ func (h *APIHandler) handleDownloadFile(w http.ResponseWriter, r *http.Request, 
 	keyHex := r.URL.Query().Get("key")
 	if keyHex == "" {
 		http.Error(w, "key parameter is required to decrypt file", http.StatusBadRequest)
+		return
+	}
+
+	if len(keyHex) != crypto.AES256KeySize*2 {
+		http.Error(w, "invalid key parameter: must be 64 hexadecimal characters for AES-256", http.StatusBadRequest)
 		return
 	}
 

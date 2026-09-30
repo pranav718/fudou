@@ -10,13 +10,26 @@ interface RestoreModalProps {
 
 export default function RestoreModal({ file, onClose }: RestoreModalProps) {
   const [keyHex, setKeyHex] = useState("");
+  const [error, setError] = useState<string | null>(null);
 
   const handleDownload = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!keyHex.trim()) return;
+    const trimmed = keyHex.trim();
+    if (!trimmed) return;
 
-    const downloadUrl = getDownloadUrl(file.id, keyHex.trim());
-    window.open(downloadUrl, "_blank");
+    if (trimmed.length !== 64 || !/^[0-9a-fA-F]{64}$/.test(trimmed)) {
+      setError("Decryption key must be exactly 64 hexadecimal characters.");
+      return;
+    }
+
+    setError(null);
+    const downloadUrl = getDownloadUrl(file.id, trimmed);
+    const a = document.createElement("a");
+    a.href = downloadUrl;
+    a.download = file.filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
     onClose();
   };
 
@@ -54,7 +67,10 @@ export default function RestoreModal({ file, onClose }: RestoreModalProps) {
             type="text"
             placeholder="e.g. 3a7f9b01c..."
             value={keyHex}
-            onChange={(e) => setKeyHex(e.target.value)}
+            onChange={(e) => {
+              setKeyHex(e.target.value);
+              if (error) setError(null);
+            }}
             style={{
               padding: "0.75rem",
               background: "rgba(0, 0, 0, 0.3)",
@@ -65,6 +81,19 @@ export default function RestoreModal({ file, onClose }: RestoreModalProps) {
               fontSize: "0.85rem",
             }}
           />
+
+          {error && (
+            <div style={{
+              padding: "0.6rem 0.8rem",
+              background: "rgba(239, 68, 68, 0.15)",
+              border: "1px solid rgba(239, 68, 68, 0.3)",
+              color: "var(--danger)",
+              borderRadius: "6px",
+              fontSize: "0.85rem",
+            }}>
+              {error}
+            </div>
+          )}
 
           <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.75rem", marginTop: "1rem" }}>
             <button
