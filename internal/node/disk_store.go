@@ -9,13 +9,14 @@ import (
 )
 
 var (
-	ErrChunkNotFound = errors.New("chunk not found on node")
-	ErrInvalidChunkID = errors.New("invalid chunk identifier")
+	ErrChunkNotFound    = errors.New("chunk not found on node")
+	ErrInvalidChunkID   = errors.New("invalid chunk identifier")
+	ErrCapacityExceeded = errors.New("node storage capacity exceeded")
 )
 
 type DiskStore struct {
-	mu         sync.RWMutex
-	baseDir    string
+	mu          sync.RWMutex
+	baseDir     string
 	maxCapacity int64
 }
 
@@ -24,7 +25,7 @@ func NewDiskStore(baseDir string, maxCapacity int64) (*DiskStore, error) {
 		return nil, err
 	}
 	return &DiskStore{
-		baseDir:    baseDir,
+		baseDir:     baseDir,
 		maxCapacity: maxCapacity,
 	}, nil
 }
@@ -45,13 +46,25 @@ func (ds *DiskStore) StoreChunk(chunkID string, data io.Reader) error {
 		return err
 	}
 
+	var currentUsed int64
+	if ds.maxCapacity > 0 {
+		var err error
+		currentUsed, _, err = ds.getStatsLocked()
+		if err != nil {
+			return err
+		}
+		if currentUsed >= ds.maxCapacity {
+			return ErrCapacityExceeded
+		}
+	}
+
 	tempFile, err := os.CreateTemp(ds.baseDir, "upload-*")
 	if err != nil {
 		return err
 	}
 	tempName := tempFile.Name()
 
-	_, copyErr := io.Copy(tempFile, data)
+	written, copyErr := io.Copy(tempFile, data)
 	closeErr := tempFile.Close()
 
 	if copyErr != nil {
@@ -61,6 +74,17 @@ func (ds *DiskStore) StoreChunk(chunkID string, data io.Reader) error {
 	if closeErr != nil {
 		os.Remove(tempName)
 		return closeErr
+	}
+
+	if ds.maxCapacity > 0 {
+		var existingSize int64
+		if info, err := os.Stat(targetPath); err == nil {
+			existingSize = info.Size()
+		}
+		if currentUsed-existingSize+written > ds.maxCapacity {
+			os.Remove(tempName)
+			return ErrCapacityExceeded
+		}
 	}
 
 	return os.Rename(tempName, targetPath)
@@ -120,7 +144,10 @@ func (ds *DiskStore) HasChunk(chunkID string) (bool, error) {
 func (ds *DiskStore) GetStats() (int64, int64, error) {
 	ds.mu.RLock()
 	defer ds.mu.RUnlock()
+	return ds.getStatsLocked()
+}
 
+func (ds *DiskStore) getStatsLocked() (int64, int64, error) {
 	var totalUsed int64
 	entries, err := os.ReadDir(ds.baseDir)
 	if err != nil {

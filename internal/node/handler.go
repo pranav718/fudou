@@ -87,6 +87,10 @@ func (h *Handler) handleStoreChunk(w http.ResponseWriter, r *http.Request, chunk
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		if errors.Is(err, ErrCapacityExceeded) {
+			http.Error(w, err.Error(), http.StatusInsufficientStorage)
+			return
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

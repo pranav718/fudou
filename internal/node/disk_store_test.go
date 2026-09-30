@@ -94,3 +94,41 @@ func TestDiskStoreInvalidID(t *testing.T) {
 		t.Fatalf("expected ErrInvalidChunkID for empty id, got %v", err)
 	}
 }
+
+func TestDiskStoreCapacityExceeded(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "fudou-node-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	store, err := NewDiskStore(tempDir, 50)
+	if err != nil {
+		t.Fatalf("failed to create disk store: %v", err)
+	}
+
+	err = store.StoreChunk("chunk-1", bytes.NewReader(bytes.Repeat([]byte("a"), 30)))
+	if err != nil {
+		t.Fatalf("failed to store chunk-1: %v", err)
+	}
+
+	err = store.StoreChunk("chunk-2", bytes.NewReader(bytes.Repeat([]byte("b"), 30)))
+	if !errors.Is(err, ErrCapacityExceeded) {
+		t.Fatalf("expected ErrCapacityExceeded, got %v", err)
+	}
+
+	err = store.StoreChunk("chunk-1", bytes.NewReader(bytes.Repeat([]byte("c"), 40)))
+	if err != nil {
+		t.Fatalf("failed to overwrite chunk-1 within capacity: %v", err)
+	}
+
+	err = store.StoreChunk("chunk-2", bytes.NewReader(bytes.Repeat([]byte("b"), 10)))
+	if err != nil {
+		t.Fatalf("failed to store chunk-2 up to capacity limit: %v", err)
+	}
+
+	err = store.StoreChunk("chunk-4", bytes.NewReader([]byte("x")))
+	if !errors.Is(err, ErrCapacityExceeded) {
+		t.Fatalf("expected ErrCapacityExceeded on full store, got %v", err)
+	}
+}

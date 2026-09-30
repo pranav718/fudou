@@ -109,3 +109,31 @@ func TestHandlerNotFoundAndMethodNotAllowed(t *testing.T) {
 		t.Fatalf("expected 404 for /unknown/path, got %d", w404.Code)
 	}
 }
+
+func TestHandlerCapacityExceeded(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "fudou-handler-cap-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	store, err := NewDiskStore(tempDir, 20)
+	if err != nil {
+		t.Fatalf("failed to create disk store: %v", err)
+	}
+	handler := NewHandler(store, "test-node-cap")
+
+	req1 := httptest.NewRequest(http.MethodPut, "/chunks/chunk-1", bytes.NewReader(bytes.Repeat([]byte("a"), 15)))
+	w1 := httptest.NewRecorder()
+	handler.ServeHTTP(w1, req1)
+	if w1.Code != http.StatusCreated {
+		t.Fatalf("expected 201 for first chunk, got %d", w1.Code)
+	}
+
+	req2 := httptest.NewRequest(http.MethodPut, "/chunks/chunk-2", bytes.NewReader(bytes.Repeat([]byte("b"), 10)))
+	w2 := httptest.NewRecorder()
+	handler.ServeHTTP(w2, req2)
+	if w2.Code != http.StatusInsufficientStorage {
+		t.Fatalf("expected 507 for chunk exceeding capacity, got %d", w2.Code)
+	}
+}
