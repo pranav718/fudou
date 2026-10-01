@@ -1,4 +1,4 @@
-.PHONY: build test run-coordinator run-node1 run-node2 run-node3 dev-web docker-up docker-down clean
+.PHONY: build test run-coordinator run-node1 run-node2 run-node3 dev-web docker-up docker-down clean demo status stop
 
 build:
 	go build -o bin/coordinator ./cmd/coordinator
@@ -6,6 +6,17 @@ build:
 
 test:
 	go test -v ./...
+
+demo:
+	bash scripts/demo.sh
+
+status:
+	curl -s http://localhost:8080/api/admin/nodes
+
+stop:
+	pkill -f "bin/coordinator" 2>/dev/null || true
+	pkill -f "bin/node" 2>/dev/null || true
+	echo "All cluster services stopped."
 
 run-coordinator:
 	PORT=8080 REPLICATION_FACTOR=3 go run ./cmd/coordinator
