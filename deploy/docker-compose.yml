@@ -1,17 +1,7 @@
 version: "3.8"
 
+# Run the terminal dashboard on the host with make tui against localhost:8080.
 services:
-  web:
-    build:
-      context: ..
-      dockerfile: deploy/web.Dockerfile
-    ports:
-      - "3000:3000"
-    environment:
-      - NEXT_PUBLIC_COORDINATOR_URL=http://localhost:8080
-    depends_on:
-      - coordinator
-
   coordinator:
     build:
       context: ..

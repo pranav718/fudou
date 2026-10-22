@@ -51,7 +51,7 @@ echo "[STATUS: ONLINE] Coordinator listening on :8080"
 echo "[STATUS: ONLINE] 3 Storage Nodes registered and beaconing heartbeats."
 echo ""
 
-echo "[PHASE 3] Uploading file with AES-256-GCM zero-knowledge encryption..."
+echo "[PHASE 3] Uploading file with coordinator-side AES-256-GCM encryption..."
 echo "Software Engineering Lab Evaluation - Confidential Storage Payload" > data/sample_eval_doc.txt
 
 UPLOAD_RESP=$(curl -s -X POST http://localhost:8080/api/files -F "file=@data/sample_eval_doc.txt" -F "user_id=student-eval")
@@ -75,7 +75,7 @@ ls -lh data/demo_node3/
 echo ""
 
 CHUNK_SAMPLE=$(ls data/demo_node1/chk-* 2>/dev/null | head -n 1)
-echo "Inspecting raw bytes of chunk ($CHUNK_SAMPLE) to verify zero-knowledge ciphertext:"
+echo "Inspecting raw bytes of chunk ($CHUNK_SAMPLE) to verify encrypted storage:"
 hexdump -C "$CHUNK_SAMPLE" | head -n 3
 echo ""
 
@@ -118,6 +118,10 @@ echo "  - Coordinator : http://localhost:8080"
 echo "  - Node 1      : http://localhost:9001"
 echo "  - Node 3      : http://localhost:9003"
 echo "  - Node 4      : http://localhost:9004"
+echo ""
+echo "To explore the cluster in the native terminal dashboard, run:"
+echo "  make tui"
+echo "  # or: go run ./cmd/fudou -coordinator http://localhost:8080"
 echo ""
 echo "To shut down all running background nodes when done, run:"
 echo "  make stop"

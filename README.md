@@ -1,6 +1,6 @@
 # fudou
 
-a fast, zero-dependency distributed backup system and storage cluster built from scratch in go. files are sliced into streams, encrypted client-side with aes-256-gcm, and scattered across independent storage nodes with 3x replication. if a node drops offline, fudou detects the heartbeat loss and heals the cluster automatically.
+a distributed backup system and storage cluster built in go, with a native terminal dashboard. the coordinator chunks file streams, encrypts them server-side with aes-256-gcm, and distributes them across independent storage nodes with 3x replication by default. if a node drops offline, fudou detects the heartbeat loss and heals the cluster automatically. the backend uses only the go standard library; the terminal frontend uses Bubble Tea, Bubbles, and Lip Gloss.
 
 ---
 
@@ -9,10 +9,11 @@ a fast, zero-dependency distributed backup system and storage cluster built from
 - [features](#features)
 - [architecture](#architecture)
 - [technologies and stack](#technologies-and-stack)
-- [live cluster dashboard and web ui](#live-cluster-dashboard-and-web-ui)
+- [native terminal dashboard](#native-terminal-dashboard)
   - [dashboard capabilities](#dashboard-capabilities)
-  - [how to run the web dashboard](#how-to-run-the-web-dashboard)
-  - [using the web dashboard](#using-the-web-dashboard)
+  - [launch the tui](#launch-the-tui)
+  - [keyboard controls](#keyboard-controls)
+  - [backup, keys, and restore](#backup-keys-and-restore)
 - [quickstart and cli reference](#quickstart-and-cli-reference)
   - [1. build binaries from source](#1-build-binaries-from-source)
   - [2. run the coordinator service](#2-run-the-coordinator-service)
@@ -42,13 +43,13 @@ a fast, zero-dependency distributed backup system and storage cluster built from
 
 - zero external dependencies in the backend: built entirely on the go standard library with net/http, crypto/aes, crypto/cipher, crypto/sha256, and sync primitives.
 - stream-based fixed chunking: files are segmented into fixed 1MB chunks on the fly without buffering entire files in memory, keeping ram usage low regardless of file size.
-- zero-knowledge client encryption: every file upload generates a unique 256-bit encryption key and 96-bit nonces per chunk with aes-256-gcm. the server never holds your raw plaintext or unencrypted chunks.
+- coordinator-side encryption: every file upload generates a unique 256-bit encryption key and 96-bit nonces per chunk with aes-256-gcm. storage nodes hold ciphertext, but the coordinator processes plaintext and keys; it is a trusted part of the system.
 - sha-256 checksum verification: cryptographic digests are computed on raw streams before chunking and re-verified byte-by-byte upon restore to catch silent data corruption or tampering.
 - n-way replication: every chunk is copied across multiple storage nodes (3x by default) using a least-loaded placement strategy that prioritizes nodes with the most free capacity.
 - self-healing cluster: a background worker audits chunk replicas every 10 seconds. if a storage node stops sending heartbeats, missing chunks are automatically re-replicated to healthy nodes.
 - independent storage daemons: nodes run as standalone http services with isolated disk directories, atomic writes, and periodic heartbeat beacons.
 - hmac-sha256 token authentication: signed bearer tokens protect api endpoints and allow role-based authorization.
-- modern web dashboard: built with next.js 15, react 19, and typescript, giving you live node health visualization, cluster disk usage meters, drag-and-drop uploads, and key-based restore modals.
+- native terminal dashboard: a styled, keyboard-driven go frontend with overview, files, and nodes tabs, live cluster metrics, searchable lists, backup prompts, file and node details, key-based restore, and confirmed deletion.
 - docker compose ready: launch the coordinator and 3 storage nodes in containers with a single command.
 
 ---
@@ -60,7 +61,7 @@ fudou splits work between a central coordinator and an arbitrary number of light
 ```mermaid
 flowchart TD
     subgraph Clients ["Ingress Layer"]
-        client["Web Dashboard / CLI / REST Client"]
+        client["Native TUI / REST Client"]
     end
 
     subgraph ControlPlane ["Coordinator (:8080)"]
@@ -123,51 +124,73 @@ flowchart LR
 
 ## technologies and stack
 
-- backend: go 1.24+ (standard library only: net/http, crypto/aes, crypto/cipher, crypto/rand, crypto/sha256, crypto/hmac, sync, os, io)
-- frontend: next.js 15, react 19, typescript, lucide-react, vanilla css tokens
+- go toolchain: go 1.26.1 or newer, as specified in `go.mod`
+- backend: go standard library only (net/http, crypto/aes, crypto/cipher, crypto/rand, crypto/sha256, crypto/hmac, sync, os, io)
+- terminal frontend: Bubble Tea for the application loop, Bubbles for interactive components, and Lip Gloss for terminal styling
 - storage engine: content-addressable local disk storage with atomic write operations
 - containers: docker, docker compose
 - build tool: gnu make
 
 ---
 
-## live cluster dashboard and web ui
+## native terminal dashboard
 
-the web dashboard gives you complete visibility into the storage cluster, lets you manage file backups, and handles client-side decryption key entry for restoring files.
+`fudou` brings cluster monitoring and file management into your terminal. it talks to the existing coordinator REST API; the server endpoints and backup/restore pipeline are unchanged.
 
 ### dashboard capabilities
 
-- cluster metrics: tracks total backed-up files, total raw bytes stored, aggregated disk capacity across all active nodes, and replication status.
-- node topology: visual cards for each storage node showing network address, online/offline status, used disk space, and total storage limits.
-- drag-and-drop uploads: drop any file into the browser to trigger stream chunking, encryption, and multi-node distribution.
-- zero-knowledge key modal: immediately after upload, the ui generates and presents your 64-character hex master key. you keep this key to decrypt your file later.
-- file catalog: inspect stored files, original file names, mime types, sizes, sha-256 checksums, and chunk counts.
-- authenticated download: click restore on any file, enter the matching 64-character hex key, and stream the decrypted file straight to your machine.
-- cascading deletion: removing a file purges metadata from the coordinator and cascades deletion calls to purge chunks across all storage nodes.
+- **overview**: cluster-wide file counts, storage usage, capacity, and replication metrics.
+- **files**: searchable file catalog, selection details, local-path backups, key-based restore, and deletion with confirmation.
+- **nodes**: searchable storage node list, online/offline status, capacity, usage, and node details.
+- **live updates**: automatic refresh every 5 seconds by default, plus on-demand refresh.
 
-### how to run the web dashboard
+### launch the tui
 
-```bash
-cd web
-npm install
-npm run dev
-```
-
-open your browser and visit `http://localhost:3000`.
-
-if your coordinator runs on a custom port or remote server, point the dashboard to it with an environment variable:
+with the coordinator and storage nodes running, open another terminal at the project root:
 
 ```bash
-NEXT_PUBLIC_COORDINATOR_URL=http://localhost:8080 npm run dev
+make tui
+# or run directly:
+go run ./cmd/fudou
+# or use the binary produced by make build:
+./bin/fudou
 ```
 
-### using the web dashboard
+configure the connection and file owner with environment variables or flags (flags take precedence):
 
-1. open `http://localhost:3000/dashboard` to access the main file manager.
-2. drag a file into the upload zone or click to browse.
-3. when the upload finishes, copy the 64-character hex key shown in the dialog. store this somewhere safe because the coordinator does not keep this key.
-4. to restore, click the download button next to the file and paste your key. fudou verifies the sha-256 hash before handing you the file.
-5. visit `http://localhost:3000/admin` to see live node heartbeat signals, node capacities, and cluster-wide metrics.
+```bash
+COORDINATOR_URL=http://localhost:8080 FUDOU_USER_ID=user-001 make tui
+go run ./cmd/fudou -coordinator http://localhost:8080 -user user-001 -refresh 2s
+```
+
+by default, the coordinator URL is `COORDINATOR_URL` or `http://localhost:8080`. the user defaults to `FUDOU_USER_ID` or empty: an empty user shows all files and uploads as `anonymous`. refresh defaults to `5s`. see the [configuration reference](#5-environment-variables-and-configuration-reference) for all flags.
+
+### keyboard controls
+
+| key | action |
+| :--- | :--- |
+| `Tab` / `Shift+Tab` | switch tabs forward / backward |
+| `1` / `2` / `3` | open overview / files / nodes |
+| `j` / `k` or arrow keys | move the selection |
+| `/` | search the files or nodes list |
+| `u` | open the backup path prompt |
+| `Enter` | open details for the selected file or node |
+| `d` | restore the selected file; prompt for its hex key and destination |
+| `x` | request deletion of the selected file, with confirmation |
+| `r` | refresh now |
+| `?` | show help |
+| `q` | quit |
+| `Ctrl+C` | emergency quit |
+
+### backup, keys, and restore
+
+1. press `u` and enter the path to a local file. the coordinator handles chunking, encryption, and replication.
+2. after a successful backup, the TUI displays the one-time 64-character hex key returned by the coordinator. copy it to a safe place before dismissing the result.
+3. key persistence is **not automatic**. the result offers an explicit, optional save to a **new key file with mode `0600`** (owner read/write only); an existing file is not overwritten. if you choose not to save, keep your own secure copy. losing the key prevents restore.
+4. on the files tab, select a file and press `d`. enter its key and a local destination path; the default is `./filename`, using the selected file's name (for example, `./document.pdf`). the coordinator decrypts and verifies the file before returning it to the TUI.
+5. press `x` on a selected file to open the deletion confirmation. confirm only when you intend to remove its metadata and stored chunks.
+
+**trust boundary:** encryption and decryption happen on the coordinator, not in the TUI. the coordinator sees uploaded plaintext and handles encryption keys, including keys submitted for restore. this is not client-side encryption or zero-knowledge storage against the coordinator. use a trusted coordinator and protect remote connections with HTTPS.
 
 ---
 
@@ -175,7 +198,7 @@ NEXT_PUBLIC_COORDINATOR_URL=http://localhost:8080 npm run dev
 
 ### 1. build binaries from source
 
-compile the coordinator and node daemons using the makefile:
+compile all three binaries—the coordinator, storage node daemon, and native terminal dashboard—using the makefile:
 
 ```bash
 make build
@@ -186,6 +209,7 @@ or build directly with go:
 ```bash
 go build -o bin/coordinator ./cmd/coordinator
 go build -o bin/node ./cmd/node
+go build -o bin/fudou ./cmd/fudou
 ```
 
 ### 2. run the coordinator service
@@ -226,7 +250,7 @@ NODE_ID=node-2 PORT=9002 STORAGE_DIR=./data/node2 COORDINATOR_URL=http://localho
 NODE_ID=node-3 PORT=9003 STORAGE_DIR=./data/node3 COORDINATOR_URL=http://localhost:8080 go run ./cmd/node
 ```
 
-nodes automatically register with the coordinator on startup and send heartbeats every 5 seconds.
+nodes automatically register with the coordinator on startup and send heartbeats every 5 seconds. launch the dashboard in another terminal with `make tui`.
 
 ### 4. launch multi-node cluster with docker compose
 
@@ -240,6 +264,12 @@ or with docker compose:
 
 ```bash
 docker compose -f deploy/docker-compose.yml up --build
+```
+
+compose runs only the coordinator and three storage nodes. run the terminal dashboard **on the host**, in a separate terminal, against the published coordinator port `8080`:
+
+```bash
+COORDINATOR_URL=http://localhost:8080 make tui
 ```
 
 to shut down the cluster and clean up containers:
@@ -270,11 +300,13 @@ make docker-down
 | `COORDINATOR_URL` | string | `http://localhost:8080` | base url of the active coordinator instance |
 | `HEARTBEAT_SEC` | integer | `5` | interval in seconds between outbound heartbeat signals |
 
-#### web dashboard options
+#### terminal dashboard options
 
-| variable | type | default | description |
+| flag | type | default | description |
 | :--- | :--- | :--- | :--- |
-| `NEXT_PUBLIC_COORDINATOR_URL` | string | `http://localhost:8080` | target coordinator url for browser api requests |
+| `-coordinator` | string | `COORDINATOR_URL` or `http://localhost:8080` | coordinator REST API base URL |
+| `-user` | string | `FUDOU_USER_ID` or empty | file owner filter and upload owner; empty lists all files and uploads as `anonymous` |
+| `-refresh` | duration | `5s` | automatic refresh interval, using a go duration such as `2s` or `1m` |
 
 ---
 
@@ -405,93 +437,29 @@ sample response:
 ```text
 fudou/
 ├── cmd/
-│   ├── coordinator/
-│   │   └── main.go               coordinator server entry point
-│   └── node/
-│       └── main.go               storage node daemon entry point
+│   ├── coordinator/              coordinator server entry point
+│   ├── fudou/                    native terminal dashboard entry point
+│   └── node/                     storage node daemon entry point
 ├── deploy/
-│   ├── coordinator.Dockerfile    multi-stage alpine container for coordinator
-│   ├── node.Dockerfile           multi-stage alpine container for storage node
-│   ├── web.Dockerfile            multi-stage alpine container for web dashboard
-│   └── docker-compose.yml        multi-node cluster orchestration
+│   ├── coordinator.Dockerfile    coordinator container build
+│   ├── node.Dockerfile           storage node container build
+│   └── docker-compose.yml        coordinator and three storage nodes
 ├── internal/
-│   ├── api/
-│   │   ├── handlers.go           http api endpoints for backup, restore, nodes, auth
-│   │   ├── handlers_test.go      comprehensive api integration test suite
-│   │   ├── metrics.go            cluster telemetry aggregation structures
-│   │   └── middleware.go         cors headers and request access logging
-│   ├── auth/
-│   │   ├── auth.go               hmac-sha256 token generation and validation
-│   │   └── auth_test.go          token tamper resistance and expiry tests
-│   ├── chunker/
-│   │   ├── chunker.go            chunk and chunker interface definitions
-│   │   ├── fixed_chunker.go      fixed-size stream chunk segmentation engine
-│   │   ├── fixed_chunker_test.go boundary, empty, and large stream tests
-│   │   ├── reassembler.go        ordered chunk reassembly and integrity pipeline
-│   │   └── reassembler_test.go   out-of-order and partial chunk reassembly tests
-│   ├── config/
-│   │   └── config.go             default parameters and environment loaders
-│   ├── coordinator/
-│   │   ├── backup.go             distributed backup coordination pipeline
-│   │   ├── backup_test.go        end-to-end backup pipeline verification
-│   │   ├── delete.go             distributed chunk deletion engine
-│   │   ├── distributor.go        least-loaded node placement algorithm
-│   │   ├── distributor_test.go   distribution and allocation tests
-│   │   ├── healing.go            background self-healing and replication engine
-│   │   ├── healing_test.go       node dropout detection and rebalancing tests
-│   │   ├── node_client.go        http client for node chunk operations
-│   │   ├── restore.go            distributed restore pipeline and verification
-│   │   ├── restore_test.go       end-to-end restore pipeline verification
-│   │   ├── transfer.go           concurrent chunk transfer engine
-│   │   └── transfer_test.go      parallel chunk transfer and error handling tests
-│   ├── crypto/
-│   │   ├── aes_gcm.go            aes-256-gcm authenticated encryption and decryption
-│   │   ├── aes_gcm_test.go       ciphertext verification and tamper failure tests
-│   │   ├── crypto.go             encryptor and hasher interface contracts
-│   │   ├── hasher.go             sha-256 stream hasher implementation
-│   │   ├── hasher_test.go        stream checksum validation tests
-│   │   ├── keys.go               secure 256-bit key and 96-bit nonce generators
-│   │   └── keys_test.go          entropy and uniqueness tests
-│   ├── metadata/
-│   │   ├── file_store.go         atomic json metadata persistence implementation
-│   │   ├── file_store_test.go    concurrent read/write and crash safety tests
-│   │   ├── memory_store.go       in-memory thread-safe metadata store
-│   │   ├── memory_store_test.go  metadata crud operations test suite
-│   │   └── store.go              store interface and domain record definitions
-│   └── node/
-│       ├── disk_store.go         local disk storage engine with atomic writes
-│       ├── disk_store_test.go    disk store io and quota boundary tests
-│       ├── handler.go            http handlers for chunk store, read, delete
-│       ├── handler_test.go       node http handler verification tests
-│       ├── heartbeat.go          outbound heartbeat beacon service
-│       ├── heartbeat_test.go     heartbeat interval and payload tests
-│       ├── server.go             storage node daemon lifecycle and router
-│       ├── server_test.go        graceful startup and shutdown tests
-│       └── store.go              node storage interface definition
-├── web/
-│   ├── app/
-│   │   ├── admin/
-│   │   │   └── page.tsx          cluster topology, node inspection, and telemetry
-│   │   ├── dashboard/
-│   │   │   └── page.tsx          file upload, key display modal, and file catalog
-│   │   ├── globals.css           sleek dark mode styling and typography
-│   │   ├── layout.tsx            root next.js layout wrapper
-│   │   └── page.tsx              landing page with architecture overview
-│   ├── components/
-│   │   ├── ClusterTopology.tsx   node cards with live health indicators and quotas
-│   │   ├── FileList.tsx          file table with delete and restore actions
-│   │   ├── FileUpload.tsx        drag-and-drop file upload zone
-│   │   ├── Navbar.tsx            top navigation bar with live status indicators
-│   │   ├── RestoreModal.tsx      decryption key prompt modal for downloads
-│   │   └── StorageStats.tsx      metrics cards for total storage and nodes
-│   ├── context/
-│   │   └── AuthContext.tsx       react auth state and session token provider
-│   ├── lib/
-│   │   └── api.ts                type-safe api client methods for web frontend
-│   ├── package.json              next.js, react, and dependencies manifest
-│   └── tsconfig.json             typescript compiler configuration
-├── go.mod                        go module definition
-└── Makefile                      automation recipes for build, test, and run
+│   ├── api/                      REST endpoints, middleware, and metrics
+│   ├── auth/                     hmac-sha256 token generation and validation
+│   ├── chunker/                  stream segmentation and ordered reassembly
+│   ├── config/                   defaults and environment loaders
+│   ├── coordinator/              backup, restore, placement, and self-healing
+│   ├── crypto/                   aes-256-gcm, sha-256, keys, and nonces
+│   ├── metadata/                 in-memory and atomic json metadata stores
+│   ├── node/                     chunk storage, HTTP handlers, and heartbeats
+│   └── tui/                      Bubble Tea application, components, and styling
+├── scripts/
+│   └── demo.sh                   backup, failover, and self-healing demo
+├── .gitignore                    generated artifacts and local configuration
+├── go.mod                        go module and terminal frontend dependencies
+├── Makefile                      build, test, cluster, and tui recipes
+└── README.md                     usage and architecture reference
 ```
 
 ---

@@ -1,8 +1,9 @@
-.PHONY: build test run-coordinator run-node1 run-node2 run-node3 dev-web docker-up docker-down clean demo status stop
+.PHONY: build test run-coordinator run-node1 run-node2 run-node3 tui docker-up docker-down clean demo status stop
 
 build:
 	go build -o bin/coordinator ./cmd/coordinator
 	go build -o bin/node ./cmd/node
+	go build -o bin/fudou ./cmd/fudou
 
 test:
 	go test -v ./...
@@ -30,8 +31,9 @@ run-node2:
 run-node3:
 	NODE_ID=node-3 PORT=9003 STORAGE_DIR=./data/node3 COORDINATOR_URL=http://localhost:8080 go run ./cmd/node
 
-dev-web:
-	cd web && npm run dev
+
+tui:
+	go run ./cmd/fudou
 
 docker-up:
 	docker compose -f deploy/docker-compose.yml up --build
