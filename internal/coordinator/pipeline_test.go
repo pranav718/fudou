@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"fmt"
 	"net/http/httptest"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -99,6 +101,101 @@ func TestBackupAndRestorePipelineRoundtrip(t *testing.T) {
 	}
 
 	if !bytes.Equal(originalPayload, restoredBuffer.Bytes()) {
-		t.Fatalf("restored content does not match original binary payload")
+		t.Fatalf("restored content does not match original plaintext")
 	}
+}
+
+func TestConcurrentMultiChunkHighLoadPipeline(t *testing.T) {
+	servers, cleanups := createSimulatedCluster(t, 5)
+	defer func() {
+		for _, clean := range cleanups {
+			clean()
+		}
+	}()
+
+	metaStore := metadata.NewMemoryStore()
+	for i, s := range servers {
+		nodeID := fmt.Sprintf("node-hl-%d", i)
+		metaStore.RegisterNode(&metadata.NodeRecord{
+			ID:        nodeID,
+			Address:   s.URL,
+			Status:    "online",
+			Capacity:  1024 * 1024 * 50,
+			UsedBytes: 0,
+			LastSeen:  time.Now(),
+		})
+	}
+
+	chk := chunker.NewFixedChunker(16 * 1024)
+	ras := chunker.NewReassembler()
+	enc := crypto.NewAESGCMEncryptor()
+	hasher := crypto.NewSHA256Hasher()
+	dist := NewDistributor()
+	client := NewHTTPNodeClient(5 * time.Second)
+	transfer := NewChunkTransferEngine(client)
+
+	backupPipeline := NewBackupPipeline(chk, enc, hasher, metaStore, dist, transfer, 3)
+	restorePipeline := NewRestorePipeline(ras, enc, hasher, metaStore, transfer)
+
+	const fileCount = 6
+	const payloadSize = 256 * 1024
+
+	type testFile struct {
+		payload []byte
+		result  *BackupResult
+	}
+
+	files := make([]testFile, fileCount)
+	for i := 0; i < fileCount; i++ {
+		p := make([]byte, payloadSize)
+		rand.Read(p)
+		files[i].payload = p
+	}
+
+	var wg sync.WaitGroup
+	ctx := context.Background()
+
+	for i := 0; i < fileCount; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			name := fmt.Sprintf("payload-%d.bin", idx)
+			res, err := backupPipeline.Backup(ctx, "load-user", name, "application/octet-stream", bytes.NewReader(files[idx].payload))
+			if err != nil {
+				t.Errorf("backup failed for file %d: %v", idx, err)
+				return
+			}
+			files[idx].result = res
+		}(i)
+	}
+	wg.Wait()
+
+	for i := 0; i < fileCount; i++ {
+		if files[i].result == nil {
+			t.Fatalf("file %d was not backed up", i)
+		}
+		if files[i].result.ChunkCount != 16 {
+			t.Fatalf("expected 16 chunks for file %d, got %d", i, files[i].result.ChunkCount)
+		}
+	}
+
+	for i := 0; i < fileCount; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			var buf bytes.Buffer
+			rec, err := restorePipeline.Restore(ctx, files[idx].result.FileID, files[idx].result.KeyHex, &buf)
+			if err != nil {
+				t.Errorf("restore failed for file %d: %v", idx, err)
+				return
+			}
+			if rec.Size != int64(payloadSize) {
+				t.Errorf("expected size %d, got %d", payloadSize, rec.Size)
+			}
+			if !bytes.Equal(files[idx].payload, buf.Bytes()) {
+				t.Errorf("payload corrupted for file %d", idx)
+			}
+		}(i)
+	}
+	wg.Wait()
 }
