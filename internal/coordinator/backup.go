@@ -119,24 +119,25 @@ func (p *BackupPipeline) Backup(ctx context.Context, userID string, filename str
 				defer wg.Done()
 				for chk := range jobs {
 					if poolCtx.Err() != nil {
-						return
+						results <- chunkResult{err: poolCtx.Err()}
+						continue
 					}
 					ciphertext, nonce, err := p.encryptor.Encrypt(chk.Data, key)
 					if err != nil {
 						results <- chunkResult{err: fmt.Errorf("%w: encryption failed: %v", ErrBackupFailed, err)}
-						return
+						continue
 					}
 
 					targetNodes, err := p.distributor.SelectNodes(activeNodes, p.replicationFactor)
 					if err != nil {
 						results <- chunkResult{err: fmt.Errorf("%w: node selection failed: %v", ErrBackupFailed, err)}
-						return
+						continue
 					}
 
 					successfulNodes, err := p.transfer.ReplicateChunk(poolCtx, chk.ID, ciphertext, targetNodes)
 					if err != nil {
 						results <- chunkResult{err: fmt.Errorf("%w: chunk replication failed: %v", ErrBackupFailed, err)}
-						return
+						continue
 					}
 
 					loc := metadata.ChunkLocation{
