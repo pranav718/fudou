@@ -5,10 +5,12 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"sync"
 )
 
 type FixedChunker struct {
 	defaultChunkSize int64
+	pool             sync.Pool
 }
 
 func NewFixedChunker(defaultChunkSize int64) *FixedChunker {
@@ -17,6 +19,26 @@ func NewFixedChunker(defaultChunkSize int64) *FixedChunker {
 	}
 	return &FixedChunker{
 		defaultChunkSize: defaultChunkSize,
+		pool: sync.Pool{
+			New: func() any {
+				b := make([]byte, defaultChunkSize)
+				return &b
+			},
+		},
+	}
+}
+
+func (fc *FixedChunker) getBuffer(size int64) *[]byte {
+	if size == fc.defaultChunkSize {
+		return fc.pool.Get().(*[]byte)
+	}
+	b := make([]byte, size)
+	return &b
+}
+
+func (fc *FixedChunker) putBuffer(b *[]byte) {
+	if b != nil && int64(len(*b)) == fc.defaultChunkSize {
+		fc.pool.Put(b)
 	}
 }
 
@@ -25,8 +47,11 @@ func (fc *FixedChunker) Split(r io.Reader, chunkSize int64) ([]Chunk, error) {
 		chunkSize = fc.defaultChunkSize
 	}
 
+	bufPtr := fc.getBuffer(chunkSize)
+	defer fc.putBuffer(bufPtr)
+	buf := *bufPtr
+
 	var chunks []Chunk
-	buf := make([]byte, chunkSize)
 	index := 0
 
 	for {
