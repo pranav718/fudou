@@ -3,8 +3,10 @@ package node
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"os"
+	"sync"
 	"testing"
 )
 
@@ -130,5 +132,67 @@ func TestDiskStoreCapacityExceeded(t *testing.T) {
 	err = store.StoreChunk("chunk-4", bytes.NewReader([]byte("x")))
 	if !errors.Is(err, ErrCapacityExceeded) {
 		t.Fatalf("expected ErrCapacityExceeded on full store, got %v", err)
+	}
+}
+
+func TestDiskStoreConcurrentOperations(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "fudou-node-concurrent-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	store, err := NewDiskStore(tempDir, 1024*1024*10)
+	if err != nil {
+		t.Fatalf("failed to create disk store: %v", err)
+	}
+
+	const workerCount = 20
+	const chunkSize = 256
+	var wg sync.WaitGroup
+
+	for i := 0; i < workerCount; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			chunkID := fmt.Sprintf("chk-concurrent-%03d", id)
+			payload := bytes.Repeat([]byte{byte(id)}, chunkSize)
+			if err := store.StoreChunk(chunkID, bytes.NewReader(payload)); err != nil {
+				t.Errorf("failed to store %s: %v", chunkID, err)
+			}
+		}(i)
+	}
+
+	wg.Wait()
+
+	used, _, err := store.GetStats()
+	if err != nil {
+		t.Fatalf("failed to get stats: %v", err)
+	}
+	expected := int64(workerCount * chunkSize)
+	if used != expected {
+		t.Fatalf("expected used bytes %d, got %d", expected, used)
+	}
+
+	for i := 0; i < workerCount/2; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			chunkID := fmt.Sprintf("chk-concurrent-%03d", id)
+			if err := store.DeleteChunk(chunkID); err != nil {
+				t.Errorf("failed to delete %s: %v", chunkID, err)
+			}
+		}(i)
+	}
+
+	wg.Wait()
+
+	usedAfter, _, err := store.GetStats()
+	if err != nil {
+		t.Fatalf("failed to get stats after deletes: %v", err)
+	}
+	expectedAfter := int64((workerCount - workerCount/2) * chunkSize)
+	if usedAfter != expectedAfter {
+		t.Fatalf("expected used bytes %d after deletes, got %d", expectedAfter, usedAfter)
 	}
 }
