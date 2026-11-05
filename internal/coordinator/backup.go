@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 	"time"
 
 	"github.com/pranav718/fudou/internal/chunker"
@@ -96,33 +97,81 @@ func (p *BackupPipeline) Backup(ctx context.Context, userID string, filename str
 		return nil, fmt.Errorf("%w: failed to get active nodes: %v", ErrBackupFailed, err)
 	}
 
-	var locations []metadata.ChunkLocation
+	type chunkResult struct {
+		index int
+		loc   metadata.ChunkLocation
+		err   error
+	}
 
-	for _, chk := range chunks {
-		ciphertext, nonce, err := p.encryptor.Encrypt(chk.Data, key)
-		if err != nil {
-			return nil, fmt.Errorf("%w: encryption failed: %v", ErrBackupFailed, err)
+	locations := make([]metadata.ChunkLocation, len(chunks))
+	if len(chunks) > 0 {
+		workerCount := min(len(chunks), 8)
+		jobs := make(chan chunker.Chunk, len(chunks))
+		results := make(chan chunkResult, len(chunks))
+
+		var wg sync.WaitGroup
+		poolCtx, poolCancel := context.WithCancel(ctx)
+		defer poolCancel()
+
+		for w := 0; w < workerCount; w++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for chk := range jobs {
+					if poolCtx.Err() != nil {
+						return
+					}
+					ciphertext, nonce, err := p.encryptor.Encrypt(chk.Data, key)
+					if err != nil {
+						results <- chunkResult{err: fmt.Errorf("%w: encryption failed: %v", ErrBackupFailed, err)}
+						return
+					}
+
+					targetNodes, err := p.distributor.SelectNodes(activeNodes, p.replicationFactor)
+					if err != nil {
+						results <- chunkResult{err: fmt.Errorf("%w: node selection failed: %v", ErrBackupFailed, err)}
+						return
+					}
+
+					successfulNodes, err := p.transfer.ReplicateChunk(poolCtx, chk.ID, ciphertext, targetNodes)
+					if err != nil {
+						results <- chunkResult{err: fmt.Errorf("%w: chunk replication failed: %v", ErrBackupFailed, err)}
+						return
+					}
+
+					loc := metadata.ChunkLocation{
+						ChunkID:  chk.ID,
+						FileID:   fileID,
+						Index:    chk.Index,
+						Checksum: chk.Checksum,
+						Nonce:    hex.EncodeToString(nonce),
+						NodeIDs:  successfulNodes,
+					}
+					results <- chunkResult{index: chk.Index, loc: loc}
+				}
+			}()
 		}
 
-		targetNodes, err := p.distributor.SelectNodes(activeNodes, p.replicationFactor)
-		if err != nil {
-			return nil, fmt.Errorf("%w: node selection failed: %v", ErrBackupFailed, err)
+		for _, chk := range chunks {
+			jobs <- chk
 		}
+		close(jobs)
 
-		successfulNodes, err := p.transfer.ReplicateChunk(ctx, chk.ID, ciphertext, targetNodes)
-		if err != nil {
-			return nil, fmt.Errorf("%w: chunk replication failed: %v", ErrBackupFailed, err)
+		var firstErr error
+		for i := 0; i < len(chunks); i++ {
+			res := <-results
+			if res.err != nil && firstErr == nil {
+				firstErr = res.err
+				poolCancel()
+			} else if res.err == nil {
+				locations[res.index] = res.loc
+			}
 		}
+		wg.Wait()
 
-		loc := metadata.ChunkLocation{
-			ChunkID:  chk.ID,
-			FileID:   fileID,
-			Index:    chk.Index,
-			Checksum: chk.Checksum,
-			Nonce:    hex.EncodeToString(nonce),
-			NodeIDs:  successfulNodes,
+		if firstErr != nil {
+			return nil, firstErr
 		}
-		locations = append(locations, loc)
 	}
 
 	fileRecord := &metadata.FileRecord{
