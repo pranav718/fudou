@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 
 	"github.com/pranav718/fudou/internal/chunker"
 	"github.com/pranav718/fudou/internal/crypto"
@@ -68,42 +69,90 @@ func (p *RestorePipeline) Restore(ctx context.Context, fileID string, keyHex str
 		nodeMap[n.ID] = n
 	}
 
-	var decryptedChunks []chunker.Chunk
+	type fetchResult struct {
+		index int
+		chunk chunker.Chunk
+		err   error
+	}
+
+	decryptedChunks := make([]chunker.Chunk, len(locations))
+	workerCount := min(len(locations), 8)
+	jobs := make(chan metadata.ChunkLocation, len(locations))
+	results := make(chan fetchResult, len(locations))
+
+	var wg sync.WaitGroup
+	poolCtx, poolCancel := context.WithCancel(ctx)
+	defer poolCancel()
+
+	for w := 0; w < workerCount; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for loc := range jobs {
+				if poolCtx.Err() != nil {
+					return
+				}
+				var candidateNodes []metadata.NodeRecord
+				for _, nodeID := range loc.NodeIDs {
+					if node, exists := nodeMap[nodeID]; exists {
+						candidateNodes = append(candidateNodes, node)
+					}
+				}
+
+				if len(candidateNodes) == 0 {
+					results <- fetchResult{err: fmt.Errorf("%w: no healthy nodes available holding chunk %s", ErrRestoreFailed, loc.ChunkID)}
+					return
+				}
+
+				encryptedData, _, err := p.transfer.FetchChunkWithFailover(poolCtx, loc.ChunkID, candidateNodes)
+				if err != nil {
+					results <- fetchResult{err: fmt.Errorf("%w: failed to retrieve chunk %s: %v", ErrRestoreFailed, loc.ChunkID, err)}
+					return
+				}
+
+				nonce, err := hex.DecodeString(loc.Nonce)
+				if err != nil {
+					results <- fetchResult{err: fmt.Errorf("%w: invalid chunk nonce: %v", ErrRestoreFailed, err)}
+					return
+				}
+
+				decrypted, err := p.encryptor.Decrypt(encryptedData, key, nonce)
+				if err != nil {
+					results <- fetchResult{err: fmt.Errorf("%w: failed to decrypt chunk %s: %v", ErrRestoreFailed, loc.ChunkID, err)}
+					return
+				}
+
+				chk := chunker.Chunk{
+					Index:    loc.Index,
+					ID:       loc.ChunkID,
+					Data:     decrypted,
+					Size:     int64(len(decrypted)),
+					Checksum: loc.Checksum,
+				}
+				results <- fetchResult{index: loc.Index, chunk: chk}
+			}
+		}()
+	}
 
 	for _, loc := range locations {
-		var candidateNodes []metadata.NodeRecord
-		for _, nodeID := range loc.NodeIDs {
-			if node, exists := nodeMap[nodeID]; exists {
-				candidateNodes = append(candidateNodes, node)
-			}
-		}
+		jobs <- loc
+	}
+	close(jobs)
 
-		if len(candidateNodes) == 0 {
-			return nil, fmt.Errorf("%w: no healthy nodes available holding chunk %s", ErrRestoreFailed, loc.ChunkID)
+	var firstErr error
+	for i := 0; i < len(locations); i++ {
+		res := <-results
+		if res.err != nil && firstErr == nil {
+			firstErr = res.err
+			poolCancel()
+		} else if res.err == nil {
+			decryptedChunks[res.index] = res.chunk
 		}
+	}
+	wg.Wait()
 
-		encryptedData, _, err := p.transfer.FetchChunkWithFailover(ctx, loc.ChunkID, candidateNodes)
-		if err != nil {
-			return nil, fmt.Errorf("%w: failed to retrieve chunk %s: %v", ErrRestoreFailed, loc.ChunkID, err)
-		}
-
-		nonce, err := hex.DecodeString(loc.Nonce)
-		if err != nil {
-			return nil, fmt.Errorf("%w: invalid chunk nonce: %v", ErrRestoreFailed, err)
-		}
-
-		decrypted, err := p.encryptor.Decrypt(encryptedData, key, nonce)
-		if err != nil {
-			return nil, fmt.Errorf("%w: failed to decrypt chunk %s: %v", ErrRestoreFailed, loc.ChunkID, err)
-		}
-
-		decryptedChunks = append(decryptedChunks, chunker.Chunk{
-			Index:    loc.Index,
-			ID:       loc.ChunkID,
-			Data:     decrypted,
-			Size:     int64(len(decrypted)),
-			Checksum: loc.Checksum,
-		})
+	if firstErr != nil {
+		return nil, firstErr
 	}
 
 	var buf bytes.Buffer
