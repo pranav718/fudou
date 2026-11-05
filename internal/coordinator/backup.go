@@ -1,8 +1,8 @@
 package coordinator
 
 import (
-	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -25,6 +25,17 @@ type BackupResult struct {
 	Checksum   string
 	ChunkCount int
 	KeyHex     string
+}
+
+type countingReader struct {
+	reader io.Reader
+	count  int64
+}
+
+func (cr *countingReader) Read(p []byte) (int, error) {
+	n, err := cr.reader.Read(p)
+	cr.count += int64(n)
+	return n, err
 }
 
 type BackupPipeline struct {
@@ -61,18 +72,17 @@ func NewBackupPipeline(
 }
 
 func (p *BackupPipeline) Backup(ctx context.Context, userID string, filename string, mimeType string, r io.Reader) (*BackupResult, error) {
-	data, err := io.ReadAll(r)
-	if err != nil {
-		return nil, fmt.Errorf("%w: failed to read stream: %v", ErrBackupFailed, err)
-	}
+	hasher := sha256.New()
+	counter := &countingReader{reader: r}
+	tee := io.TeeReader(counter, hasher)
 
-	fileChecksum := p.hasher.Hash(data)
-	totalSize := int64(len(data))
-
-	chunks, err := p.chunker.Split(bytes.NewReader(data), 0)
+	chunks, err := p.chunker.Split(tee, 0)
 	if err != nil {
 		return nil, fmt.Errorf("%w: failed to chunk file: %v", ErrBackupFailed, err)
 	}
+
+	fileChecksum := hex.EncodeToString(hasher.Sum(nil))
+	totalSize := counter.count
 
 	key, err := crypto.GenerateAESKey()
 	if err != nil {
