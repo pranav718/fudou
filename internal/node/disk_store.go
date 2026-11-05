@@ -57,20 +57,13 @@ func (ds *DiskStore) chunkPath(chunkID string) (string, error) {
 }
 
 func (ds *DiskStore) StoreChunk(chunkID string, data io.Reader) error {
-	ds.mu.Lock()
-	defer ds.mu.Unlock()
-
 	targetPath, err := ds.chunkPath(chunkID)
 	if err != nil {
 		return err
 	}
 
-	var currentUsed int64
-	if ds.maxCapacity > 0 {
-		currentUsed = ds.usedBytes.Load()
-		if currentUsed >= ds.maxCapacity {
-			return ErrCapacityExceeded
-		}
+	if ds.maxCapacity > 0 && ds.usedBytes.Load() >= ds.maxCapacity {
+		return ErrCapacityExceeded
 	}
 
 	tempFile, err := os.CreateTemp(ds.baseDir, "upload-*")
@@ -91,12 +84,16 @@ func (ds *DiskStore) StoreChunk(chunkID string, data io.Reader) error {
 		return closeErr
 	}
 
+	ds.mu.Lock()
+	defer ds.mu.Unlock()
+
 	var existingSize int64
 	if info, err := os.Stat(targetPath); err == nil {
 		existingSize = info.Size()
 	}
 
 	if ds.maxCapacity > 0 {
+		currentUsed := ds.usedBytes.Load()
 		if currentUsed-existingSize+written > ds.maxCapacity {
 			os.Remove(tempName)
 			return ErrCapacityExceeded
