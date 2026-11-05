@@ -90,8 +90,10 @@ func (p *RestorePipeline) Restore(ctx context.Context, fileID string, keyHex str
 			defer wg.Done()
 			for loc := range jobs {
 				if poolCtx.Err() != nil {
-					return
+					results <- fetchResult{err: poolCtx.Err()}
+					continue
 				}
+
 				var candidateNodes []metadata.NodeRecord
 				for _, nodeID := range loc.NodeIDs {
 					if node, exists := nodeMap[nodeID]; exists {
@@ -101,25 +103,40 @@ func (p *RestorePipeline) Restore(ctx context.Context, fileID string, keyHex str
 
 				if len(candidateNodes) == 0 {
 					results <- fetchResult{err: fmt.Errorf("%w: no healthy nodes available holding chunk %s", ErrRestoreFailed, loc.ChunkID)}
-					return
-				}
-
-				encryptedData, _, err := p.transfer.FetchChunkWithFailover(poolCtx, loc.ChunkID, candidateNodes)
-				if err != nil {
-					results <- fetchResult{err: fmt.Errorf("%w: failed to retrieve chunk %s: %v", ErrRestoreFailed, loc.ChunkID, err)}
-					return
+					continue
 				}
 
 				nonce, err := hex.DecodeString(loc.Nonce)
 				if err != nil {
 					results <- fetchResult{err: fmt.Errorf("%w: invalid chunk nonce: %v", ErrRestoreFailed, err)}
-					return
+					continue
 				}
 
-				decrypted, err := p.encryptor.Decrypt(encryptedData, key, nonce)
-				if err != nil {
-					results <- fetchResult{err: fmt.Errorf("%w: failed to decrypt chunk %s: %v", ErrRestoreFailed, loc.ChunkID, err)}
-					return
+				var decrypted []byte
+				var lastErr error
+				success := false
+
+				for _, node := range candidateNodes {
+					encryptedData, err := p.transfer.client.DownloadChunk(poolCtx, node.Address, loc.ChunkID)
+					if err != nil {
+						lastErr = err
+						continue
+					}
+
+					plain, err := p.encryptor.Decrypt(encryptedData, key, nonce)
+					if err != nil {
+						lastErr = err
+						continue
+					}
+
+					decrypted = plain
+					success = true
+					break
+				}
+
+				if !success {
+					results <- fetchResult{err: fmt.Errorf("%w: failed to retrieve valid chunk %s: %v", ErrRestoreFailed, loc.ChunkID, lastErr)}
+					continue
 				}
 
 				chk := chunker.Chunk{
