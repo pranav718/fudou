@@ -1,4 +1,4 @@
-.PHONY: build test run-coordinator run-node1 run-node2 run-node3 tui docker-up docker-down clean demo status stop
+.PHONY: build test run-coordinator run-node1 run-node2 run-node3 tui docker-up docker-down clean demo status stop bench bench-crypto bench-chunker bench-node bench-pipeline bench-profile
 
 build:
 	go build -o bin/coordinator ./cmd/coordinator
@@ -7,6 +7,24 @@ build:
 
 test:
 	go test -v ./...
+
+bench:
+	go test -run=^$$ -bench=. -benchmem ./...
+
+bench-crypto:
+	go test -run=^$$ -bench=BenchmarkAESGCM -benchmem ./internal/crypto/...
+
+bench-chunker:
+	go test -run=^$$ -bench=BenchmarkFixedChunker -benchmem ./internal/chunker/...
+
+bench-node:
+	go test -run=^$$ -bench=BenchmarkDiskStore -benchmem ./internal/node/...
+
+bench-pipeline:
+	go test -run=^$$ -bench=BenchmarkPipeline -benchmem ./internal/coordinator/...
+
+bench-profile:
+	go test -run=^$$ -bench=BenchmarkPipeline_Backup/4MB -benchmem -cpuprofile=cpu.pprof -memprofile=mem.pprof ./internal/coordinator/...
 
 demo:
 	bash scripts/demo.sh
@@ -31,7 +49,6 @@ run-node2:
 run-node3:
 	NODE_ID=node-3 PORT=9003 STORAGE_DIR=./data/node3 COORDINATOR_URL=http://localhost:8080 go run ./cmd/node
 
-
 tui:
 	go run ./cmd/fudou
 
@@ -42,4 +59,4 @@ docker-down:
 	docker compose -f deploy/docker-compose.yml down
 
 clean:
-	rm -rf bin/ data/
+	rm -rf bin/ data/ cpu.pprof mem.pprof
