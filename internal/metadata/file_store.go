@@ -9,14 +9,16 @@ import (
 )
 
 type diskSnapshot struct {
-	Files          map[string]FileRecord          `json:"files"`
-	ChunkLocations map[string][]ChunkLocation    `json:"chunk_locations"`
-	Nodes          map[string]NodeRecord          `json:"nodes"`
+	Files          map[string]FileRecord       `json:"files"`
+	ChunkLocations map[string][]ChunkLocation `json:"chunk_locations"`
+	Nodes          map[string]NodeRecord       `json:"nodes"`
 }
 
 type FileStore struct {
 	mu             sync.RWMutex
 	filePath       string
+	wal            *WAL
+	mutationCount  int
 	files          map[string]FileRecord
 	chunkLocations map[string][]ChunkLocation
 	nodes          map[string]NodeRecord
@@ -28,21 +30,34 @@ func NewFileStore(filePath string) (*FileStore, error) {
 		return nil, err
 	}
 
+	walPath := filePath + ".wal"
+	wal, err := OpenWAL(walPath)
+	if err != nil {
+		return nil, err
+	}
+
 	store := &FileStore{
 		filePath:       filePath,
+		wal:            wal,
 		files:          make(map[string]FileRecord),
 		chunkLocations: make(map[string][]ChunkLocation),
 		nodes:          make(map[string]NodeRecord),
 	}
 
-	if err := store.load(); err != nil {
+	if err := store.loadSnapshot(); err != nil {
+		wal.Close()
+		return nil, err
+	}
+
+	if err := store.replayWAL(); err != nil {
+		wal.Close()
 		return nil, err
 	}
 
 	return store, nil
 }
 
-func (s *FileStore) load() error {
+func (s *FileStore) loadSnapshot() error {
 	data, err := os.ReadFile(s.filePath)
 	if os.IsNotExist(err) {
 		return nil
@@ -69,7 +84,55 @@ func (s *FileStore) load() error {
 	return nil
 }
 
-func (s *FileStore) persist() error {
+func (s *FileStore) replayWAL() error {
+	return s.wal.Replay(func(op byte, payload []byte) error {
+		switch op {
+		case OpSaveFile:
+			var record FileRecord
+			if err := json.Unmarshal(payload, &record); err != nil {
+				return err
+			}
+			s.files[record.ID] = record
+
+		case OpDeleteFile:
+			var fileID string
+			if err := json.Unmarshal(payload, &fileID); err != nil {
+				return err
+			}
+			delete(s.files, fileID)
+			delete(s.chunkLocations, fileID)
+
+		case OpSaveChunkLocation:
+			var loc ChunkLocation
+			if err := json.Unmarshal(payload, &loc); err != nil {
+				return err
+			}
+			list := s.chunkLocations[loc.FileID]
+			updated := false
+			for i, existing := range list {
+				if existing.ChunkID == loc.ChunkID {
+					list[i] = loc
+					updated = true
+					break
+				}
+			}
+			if !updated {
+				list = append(list, loc)
+			}
+			s.chunkLocations[loc.FileID] = list
+
+		case OpRegisterNode:
+			var node NodeRecord
+			if err := json.Unmarshal(payload, &node); err != nil {
+				return err
+			}
+			s.nodes[node.ID] = node
+		}
+		return nil
+	})
+}
+
+func (s *FileStore) Checkpoint() error {
 	snapshot := diskSnapshot{
 		Files:          s.files,
 		ChunkLocations: s.chunkLocations,
@@ -98,7 +161,33 @@ func (s *FileStore) persist() error {
 		return err
 	}
 
-	return os.Rename(tempName, s.filePath)
+	if err := os.Rename(tempName, s.filePath); err != nil {
+		return err
+	}
+
+	if err := s.wal.Truncate(); err != nil {
+		return err
+	}
+
+	s.mutationCount = 0
+	return nil
+}
+
+func (s *FileStore) recordMutation(op byte, entity interface{}) error {
+	data, err := json.Marshal(entity)
+	if err != nil {
+		return err
+	}
+
+	if err := s.wal.Append(op, data); err != nil {
+		return err
+	}
+
+	s.mutationCount++
+	if s.mutationCount >= 100 {
+		return s.Checkpoint()
+	}
+	return nil
 }
 
 func (s *FileStore) SaveFile(record *FileRecord) error {
@@ -112,7 +201,7 @@ func (s *FileStore) SaveFile(record *FileRecord) error {
 	record.UpdatedAt = now
 
 	s.files[record.ID] = *record
-	return s.persist()
+	return s.recordMutation(OpSaveFile, record)
 }
 
 func (s *FileStore) GetFile(id string) (*FileRecord, error) {
@@ -150,7 +239,7 @@ func (s *FileStore) DeleteFile(id string) error {
 
 	delete(s.files, id)
 	delete(s.chunkLocations, id)
-	return s.persist()
+	return s.recordMutation(OpDeleteFile, id)
 }
 
 func (s *FileStore) SaveChunkLocation(loc *ChunkLocation) error {
@@ -162,12 +251,12 @@ func (s *FileStore) SaveChunkLocation(loc *ChunkLocation) error {
 		if existing.ChunkID == loc.ChunkID {
 			list[i] = *loc
 			s.chunkLocations[loc.FileID] = list
-			return s.persist()
+			return s.recordMutation(OpSaveChunkLocation, loc)
 		}
 	}
 
 	s.chunkLocations[loc.FileID] = append(list, *loc)
-	return s.persist()
+	return s.recordMutation(OpSaveChunkLocation, loc)
 }
 
 func (s *FileStore) GetChunkLocations(fileID string) ([]ChunkLocation, error) {
@@ -192,7 +281,7 @@ func (s *FileStore) RegisterNode(node *NodeRecord) error {
 		node.LastSeen = time.Now()
 	}
 	s.nodes[node.ID] = *node
-	return s.persist()
+	return s.recordMutation(OpRegisterNode, node)
 }
 
 func (s *FileStore) UpdateNodeHeartbeat(nodeID string) error {
@@ -207,7 +296,7 @@ func (s *FileStore) UpdateNodeHeartbeat(nodeID string) error {
 	node.LastSeen = time.Now()
 	node.Status = "online"
 	s.nodes[nodeID] = node
-	return s.persist()
+	return s.recordMutation(OpRegisterNode, &node)
 }
 
 func (s *FileStore) GetActiveNodes() ([]NodeRecord, error) {
@@ -232,4 +321,10 @@ func (s *FileStore) GetAllNodes() ([]NodeRecord, error) {
 		all = append(all, node)
 	}
 	return all, nil
+}
+
+func (s *FileStore) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.wal.Close()
 }
