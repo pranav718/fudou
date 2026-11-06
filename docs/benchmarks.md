@@ -4,11 +4,14 @@
 
 This document defines the benchmarking methodology, workloads, architectural optimizations, and empirical performance metrics for the fudou distributed backup system.
 
-The test suite evaluates performance across four primary layers:
+The test suite evaluates performance across seven primary layers:
 1. Chunk segmentation and reassembly throughput
 2. Symmetric authenticated encryption and cryptographic hashing
 3. Local disk store read, write, and capacity management
 4. End-to-end distributed backup and restore pipelines
+5. Write-Ahead Log (WAL) append and crash replay persistence
+6. In-memory LRU chunk cache retrieval and eviction
+7. Consistent hash ring node lookup and distribution
 
 ---
 
@@ -27,7 +30,7 @@ All benchmarks were recorded on the following reference system:
 
 ## Optimization Architecture
 
-The benchmark results reflect three major architectural improvements:
+The benchmark results reflect core architectural improvements:
 
 1. Zero-Allocation Buffer Pooling:
    The fixed-size chunker reuses pre-allocated 64KB buffers from a synchronized pool (`sync.Pool`), eliminating heap thrashing during continuous streams.
@@ -40,6 +43,15 @@ The benchmark results reflect three major architectural improvements:
 
 4. Streaming Restore Pipeline:
    Restoration streams chunks in parallel across candidate nodes with Byzantine fault tolerance, decoding and verifying checksums in flight.
+
+5. Append-Only Write-Ahead Log (WAL) Journal:
+   Metadata mutations append compact binary/JSON records in O(1) time with CRC32 integrity validation, eliminating full database JSON re-serialization on every write.
+
+6. In-Memory LRU Chunk Read Cache:
+   Storage nodes cache hot chunk blobs in a thread-safe LRU cache, delivering over 15 GB/s memory read throughput and bypassing physical disk I/O.
+
+7. Consistent Hash Ring with Virtual Nodes:
+   Chunks route to replica holders via a consistent hash ring with 128 virtual nodes per physical daemon, ensuring uniform dispersion with O(log N) lookups in 233 nanoseconds.
 
 ---
 
@@ -113,6 +125,45 @@ Summary: Distributed backup throughput reaches approximately 38.8 MB/s while sim
 
 ---
 
+### 5. Metadata Write-Ahead Log (WAL) Journal
+
+Measured via `internal/metadata/wal_bench_test.go`:
+
+| Operation | Throughput (MB/s) | Latency (ns/op) | Allocs/Op |
+| :--- | :--- | :--- | :--- |
+| WAL Append Record | 14.92 MB/s | 4,557 ns | 0 |
+| WAL Replay (5,000 Records) | 73.83 MB/s | 4,469,834 ns | 5,008 |
+
+Summary: Append-only WAL mutations write directly to disk log in 4.5 microseconds with zero heap allocations per entry.
+
+---
+
+### 6. In-Memory LRU Chunk Cache
+
+Measured via `internal/node/cache_bench_test.go`:
+
+| Operation | Throughput (MB/s) | Latency (ns/op) | Allocs/Op |
+| :--- | :--- | :--- | :--- |
+| LRU Cache Read (Hit) | 15,563.77 MB/s | 4,211 ns | 1 |
+| LRU Cache Put and Evict | 19,979.89 MB/s | 3,280 ns | 4 |
+
+Summary: Chunk cache hits deliver 15.5 GB/s memory throughput, reducing read latencies to 4.2 microseconds without disk system calls.
+
+---
+
+### 7. Consistent Hash Ring Routing
+
+Measured via `internal/coordinator/consistent_hash_bench_test.go`:
+
+| Operation | Scope | Latency (ns/op) | Allocs/Op |
+| :--- | :--- | :--- | :--- |
+| 3-Replica Node Lookup | 1,280 Virtual Nodes | 233.0 ns | 1 |
+| Dynamic Node Add/Remove | 64 Virtual Nodes | 36,942 ns | 5 |
+
+Summary: 3-replica consistent hash lookups execute in 233 nanoseconds with a single memory allocation.
+
+---
+
 ## Comparison Baseline
 
 | Metric | Traditional Sequential Pipeline | Fudou Pipelined Engine | Improvement |
@@ -122,6 +173,9 @@ Summary: Distributed backup throughput reaches approximately 38.8 MB/s while sim
 | Node Capacity Evaluation | Directory scan O(N) | Atomic integer O(1) | O(N) to O(1) (0.48 ns) |
 | Restore Fetch Strategy | Single candidate loop | Concurrent parallel fetch | 3.4x speedup |
 | Memory Footprint during Backup| Full file in memory | Streamed io.TeeReader | O(chunk_size) memory bound |
+| Metadata Mutation Persistence | Full JSON rewrite O(N) | Append-only WAL O(1) | 0 allocs in 4.5 us |
+| Hot Chunk Retrieval | OS disk read | LRU memory cache | 15.5 GB/s (4.2 us) |
+| Replica Placement Balance | Greedy capacity sort | Consistent Hash Ring | 233 ns O(log N) lookup |
 
 ---
 
@@ -157,6 +211,24 @@ Execute end-to-end pipeline benchmarks:
 make bench-pipeline
 ```
 
+Execute metadata WAL journal benchmarks:
+
+```bash
+make bench-wal
+```
+
+Execute LRU chunk cache benchmarks:
+
+```bash
+make bench-cache
+```
+
+Execute consistent hash ring benchmarks:
+
+```bash
+make bench-ring
+```
+
 Generate CPU and memory profiling profiles:
 
 ```bash
@@ -168,4 +240,3 @@ Inspect generated profiles with pprof:
 ```bash
 go tool pprof -http=:8081 cpu.pprof
 ```
-
