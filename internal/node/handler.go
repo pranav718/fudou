@@ -9,14 +9,20 @@ import (
 )
 
 type Handler struct {
-	store  StorageNode
-	nodeID string
+	store    StorageNode
+	nodeID   string
+	scrubber *BitRotScrubber
 }
 
 func NewHandler(store StorageNode, nodeID string) *Handler {
+	return NewHandlerWithScrubber(store, nodeID, nil)
+}
+
+func NewHandlerWithScrubber(store StorageNode, nodeID string, scrubber *BitRotScrubber) *Handler {
 	return &Handler{
-		store:  store,
-		nodeID: nodeID,
+		store:    store,
+		nodeID:   nodeID,
+		scrubber: scrubber,
 	}
 }
 
@@ -31,6 +37,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if len(parts) == 1 && parts[0] == "stats" && r.Method == http.MethodGet {
 		h.handleStats(w, r)
+		return
+	}
+
+	if len(parts) == 1 && parts[0] == "scrub" {
+		switch r.Method {
+		case http.MethodGet:
+			h.handleGetScrub(w, r)
+		case http.MethodPost:
+			h.handleRunScrub(w, r)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
 		return
 	}
 
@@ -77,6 +95,32 @@ func (h *Handler) handleStats(w http.ResponseWriter, r *http.Request) {
 		"used":     used,
 		"capacity": capacity,
 	})
+}
+
+func (h *Handler) handleGetScrub(w http.ResponseWriter, r *http.Request) {
+	if h.scrubber == nil {
+		http.Error(w, "scrubber not configured", http.StatusNotImplemented)
+		return
+	}
+	report := h.scrubber.GetReport()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(report)
+}
+
+func (h *Handler) handleRunScrub(w http.ResponseWriter, r *http.Request) {
+	if h.scrubber == nil {
+		http.Error(w, "scrubber not configured", http.StatusNotImplemented)
+		return
+	}
+	report, err := h.scrubber.RunScrub()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(report)
 }
 
 func (h *Handler) handleStoreChunk(w http.ResponseWriter, r *http.Request, chunkID string) {
