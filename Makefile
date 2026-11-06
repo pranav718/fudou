@@ -1,4 +1,4 @@
-.PHONY: build test run-coordinator run-node1 run-node2 run-node3 tui docker-up docker-down clean demo status stop bench bench-crypto bench-chunker bench-node bench-pipeline bench-profile
+.PHONY: build test run-coordinator run-node1 run-node2 run-node3 tui docker-up docker-down clean demo status stop bench bench-crypto bench-chunker bench-node bench-pipeline bench-profile bench-wal bench-cache bench-ring
 
 build:
 	go build -o bin/coordinator ./cmd/coordinator
@@ -25,6 +25,15 @@ bench-pipeline:
 
 bench-profile:
 	go test -run=^$$ -bench=BenchmarkPipeline_Backup/4MB -benchmem -cpuprofile=cpu.pprof -memprofile=mem.pprof ./internal/coordinator/...
+
+bench-wal:
+	go test -run=^$$ -bench=BenchmarkWAL -benchmem ./internal/metadata/...
+
+bench-cache:
+	go test -run=^$$ -bench=BenchmarkLRUCache -benchmem ./internal/node/...
+
+bench-ring:
+	go test -run=^$$ -bench=BenchmarkHashRing -benchmem ./internal/coordinator/...
 
 demo:
 	bash scripts/demo.sh
