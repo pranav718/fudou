@@ -1,6 +1,7 @@
 package node
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"os"
@@ -20,15 +21,21 @@ type DiskStore struct {
 	baseDir     string
 	maxCapacity int64
 	usedBytes   atomic.Int64
+	cache       *LRUChunkCache
 }
 
 func NewDiskStore(baseDir string, maxCapacity int64) (*DiskStore, error) {
+	return NewDiskStoreWithCache(baseDir, maxCapacity, 64*1024*1024)
+}
+
+func NewDiskStoreWithCache(baseDir string, maxCapacity int64, cacheCapacity int64) (*DiskStore, error) {
 	if err := os.MkdirAll(baseDir, 0755); err != nil {
 		return nil, err
 	}
 	ds := &DiskStore{
 		baseDir:     baseDir,
 		maxCapacity: maxCapacity,
+		cache:       NewLRUChunkCache(cacheCapacity),
 	}
 
 	var totalUsed int64
@@ -72,7 +79,10 @@ func (ds *DiskStore) StoreChunk(chunkID string, data io.Reader) error {
 	}
 	tempName := tempFile.Name()
 
-	written, copyErr := io.Copy(tempFile, data)
+	var buf bytes.Buffer
+	tee := io.TeeReader(data, &buf)
+
+	written, copyErr := io.Copy(tempFile, tee)
 	closeErr := tempFile.Close()
 
 	if copyErr != nil {
@@ -106,10 +116,19 @@ func (ds *DiskStore) StoreChunk(chunkID string, data io.Reader) error {
 	}
 
 	ds.usedBytes.Add(written - existingSize)
+	if ds.cache != nil && buf.Len() > 0 {
+		ds.cache.Put(chunkID, buf.Bytes())
+	}
 	return nil
 }
 
 func (ds *DiskStore) RetrieveChunk(chunkID string) (io.ReadCloser, error) {
+	if ds.cache != nil {
+		if cached, ok := ds.cache.Get(chunkID); ok {
+			return io.NopCloser(bytes.NewReader(cached)), nil
+		}
+	}
+
 	ds.mu.RLock()
 	defer ds.mu.RUnlock()
 
@@ -122,7 +141,21 @@ func (ds *DiskStore) RetrieveChunk(chunkID string) (io.ReadCloser, error) {
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, ErrChunkNotFound
 	}
-	return file, err
+	if err != nil {
+		return nil, err
+	}
+
+	if ds.cache != nil {
+		data, readErr := io.ReadAll(file)
+		file.Close()
+		if readErr != nil {
+			return nil, readErr
+		}
+		ds.cache.Put(chunkID, data)
+		return io.NopCloser(bytes.NewReader(data)), nil
+	}
+
+	return file, nil
 }
 
 func (ds *DiskStore) DeleteChunk(chunkID string) error {
@@ -148,10 +181,19 @@ func (ds *DiskStore) DeleteChunk(chunkID string) error {
 	}
 
 	ds.usedBytes.Add(-info.Size())
+	if ds.cache != nil {
+		ds.cache.Delete(chunkID)
+	}
 	return nil
 }
 
 func (ds *DiskStore) HasChunk(chunkID string) (bool, error) {
+	if ds.cache != nil {
+		if _, ok := ds.cache.Get(chunkID); ok {
+			return true, nil
+		}
+	}
+
 	ds.mu.RLock()
 	defer ds.mu.RUnlock()
 
@@ -171,9 +213,12 @@ func (ds *DiskStore) HasChunk(chunkID string) (bool, error) {
 }
 
 func (ds *DiskStore) GetStats() (int64, int64, error) {
-	return ds.getStatsLocked()
+	return ds.usedBytes.Load(), ds.maxCapacity, nil
 }
 
-func (ds *DiskStore) getStatsLocked() (int64, int64, error) {
-	return ds.usedBytes.Load(), ds.maxCapacity, nil
+func (ds *DiskStore) CacheStats() (hits, misses, evictions, currentBytes, capacityBytes int64) {
+	if ds.cache == nil {
+		return 0, 0, 0, 0, 0
+	}
+	return ds.cache.Stats()
 }
