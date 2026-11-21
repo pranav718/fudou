@@ -67,3 +67,29 @@ func TestDistributorSelectAdditionalNodes(t *testing.T) {
 		t.Fatalf("expected node-2, got %v", additional)
 	}
 }
+
+func TestDistributorSelectNodesForChunk(t *testing.T) {
+	dist := NewDistributor()
+
+	nodes := []metadata.NodeRecord{
+		{ID: "node-1", Address: "http://localhost:9001", Status: "online", Capacity: 1000, UsedBytes: 100},
+		{ID: "node-2", Address: "http://localhost:9002", Status: "online", Capacity: 1000, UsedBytes: 200},
+		{ID: "node-3", Address: "http://localhost:9003", Status: "online", Capacity: 1000, UsedBytes: 300},
+	}
+
+	selectedA, err := dist.SelectNodesForChunk(nodes, "chunk-xyz-1", 2)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(selectedA) != 2 {
+		t.Fatalf("expected 2 nodes, got %d", len(selectedA))
+	}
+
+	selectedB, err := dist.SelectNodesForChunk(nodes, "chunk-xyz-1", 2)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(selectedB) != 2 || selectedA[0].ID != selectedB[0].ID || selectedA[1].ID != selectedB[1].ID {
+		t.Fatalf("expected deterministic node selection for same chunk key")
+	}
+}

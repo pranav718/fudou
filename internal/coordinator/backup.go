@@ -128,7 +128,7 @@ func (p *BackupPipeline) Backup(ctx context.Context, userID string, filename str
 						continue
 					}
 
-					targetNodes, err := p.distributor.SelectNodes(activeNodes, p.replicationFactor)
+					targetNodes, err := p.distributor.SelectNodesForChunk(activeNodes, chk.ID, p.replicationFactor)
 					if err != nil {
 						results <- chunkResult{err: fmt.Errorf("%w: node selection failed: %v", ErrBackupFailed, err)}
 						continue
