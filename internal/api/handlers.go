@@ -177,9 +177,9 @@ func (h *APIHandler) handleClusterMetrics(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	var totalBytes int
+	var totalBytes int64
 	for _, f := range files {
-		totalBytes += int(f.Size)
+		totalBytes += f.Size
 	}
 
 	var totalCapacity int64

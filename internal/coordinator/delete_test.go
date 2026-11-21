@@ -58,3 +58,14 @@ func TestDeletePipeline(t *testing.T) {
 		t.Fatalf("chunk should have been deleted from node-2")
 	}
 }
+
+func TestDeletePipelineNonExistentFile(t *testing.T) {
+	mock := newMockNodeClient()
+	store := metadata.NewMemoryStore()
+	pipeline := NewDeletePipeline(store, mock)
+
+	err := pipeline.DeleteFile(context.Background(), "non-existent-id")
+	if !errors.Is(err, metadata.ErrFileNotFound) {
+		t.Fatalf("expected ErrFileNotFound, got %v", err)
+	}
+}

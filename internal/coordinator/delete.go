@@ -21,6 +21,10 @@ func NewDeletePipeline(store metadata.Store, client NodeClient) *DeletePipeline 
 }
 
 func (p *DeletePipeline) DeleteFile(ctx context.Context, fileID string) error {
+	if _, err := p.store.GetFile(fileID); err != nil {
+		return err
+	}
+
 	locations, err := p.store.GetChunkLocations(fileID)
 	if err != nil {
 		return err
@@ -36,19 +40,41 @@ func (p *DeletePipeline) DeleteFile(ctx context.Context, fileID string) error {
 		nodeMap[n.ID] = n.Address
 	}
 
-	var wg sync.WaitGroup
+	type deleteJob struct {
+		address string
+		chunkID string
+	}
+
+	var jobs []deleteJob
 	for _, loc := range locations {
 		for _, nodeID := range loc.NodeIDs {
 			if addr, exists := nodeMap[nodeID]; exists {
-				wg.Add(1)
-				go func(address string, chunkID string) {
-					defer wg.Done()
-					p.client.DeleteChunk(ctx, address, chunkID)
-				}(addr, loc.ChunkID)
+				jobs = append(jobs, deleteJob{address: addr, chunkID: loc.ChunkID})
 			}
 		}
 	}
-	wg.Wait()
+
+	if len(jobs) > 0 {
+		workerCount := min(len(jobs), 8)
+		jobChan := make(chan deleteJob, len(jobs))
+		var wg sync.WaitGroup
+
+		for w := 0; w < workerCount; w++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for j := range jobChan {
+					p.client.DeleteChunk(ctx, j.address, j.chunkID)
+				}
+			}()
+		}
+
+		for _, j := range jobs {
+			jobChan <- j
+		}
+		close(jobChan)
+		wg.Wait()
+	}
 
 	if err := p.store.DeleteFile(fileID); err != nil {
 		return fmt.Errorf("failed to delete file metadata: %w", err)
