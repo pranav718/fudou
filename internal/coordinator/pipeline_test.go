@@ -199,3 +199,61 @@ func TestConcurrentMultiChunkHighLoadPipeline(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestBackupAndRestoreZeroByteFile(t *testing.T) {
+	servers, cleanups := createSimulatedCluster(t, 2)
+	defer func() {
+		for _, clean := range cleanups {
+			clean()
+		}
+	}()
+
+	metaStore := metadata.NewMemoryStore()
+	for i, s := range servers {
+		metaStore.RegisterNode(&metadata.NodeRecord{
+			ID:        fmt.Sprintf("node-%d", i),
+			Address:   s.URL,
+			Status:    "online",
+			Capacity:  1024 * 1024 * 10,
+			UsedBytes: 0,
+			LastSeen:  time.Now(),
+		})
+	}
+
+	chk := chunker.NewFixedChunker(64 * 1024)
+	ras := chunker.NewReassembler()
+	enc := crypto.NewAESGCMEncryptor()
+	hasher := crypto.NewSHA256Hasher()
+	dist := NewDistributor()
+	client := NewHTTPNodeClient(5 * time.Second)
+	transfer := NewChunkTransferEngine(client)
+
+	backupPipeline := NewBackupPipeline(chk, enc, hasher, metaStore, dist, transfer, 2)
+	restorePipeline := NewRestorePipeline(ras, enc, hasher, metaStore, transfer)
+
+	ctx := context.Background()
+	backupResult, err := backupPipeline.Backup(ctx, "user-zero", "empty.txt", "text/plain", bytes.NewReader([]byte{}))
+	if err != nil {
+		t.Fatalf("backup failed for empty file: %v", err)
+	}
+
+	if backupResult.ChunkCount != 0 {
+		t.Fatalf("expected 0 chunks for empty file, got %d", backupResult.ChunkCount)
+	}
+	if backupResult.TotalSize != 0 {
+		t.Fatalf("expected 0 bytes for empty file, got %d", backupResult.TotalSize)
+	}
+
+	var restoredBuffer bytes.Buffer
+	record, err := restorePipeline.Restore(ctx, backupResult.FileID, backupResult.KeyHex, &restoredBuffer)
+	if err != nil {
+		t.Fatalf("restore failed for empty file: %v", err)
+	}
+
+	if record.Size != 0 {
+		t.Fatalf("expected restored size 0, got %d", record.Size)
+	}
+	if restoredBuffer.Len() != 0 {
+		t.Fatalf("expected 0 bytes restored, got %d", restoredBuffer.Len())
+	}
+}

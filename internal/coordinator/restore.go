@@ -54,6 +54,14 @@ func (p *RestorePipeline) Restore(ctx context.Context, fileID string, keyHex str
 		return nil, fmt.Errorf("%w: metadata error: %v", ErrRestoreFailed, err)
 	}
 
+	if fileRecord.Size == 0 && fileRecord.ChunkCount == 0 {
+		emptyHash := p.hasher.Hash([]byte{})
+		if fileRecord.Checksum != "" && fileRecord.Checksum != emptyHash {
+			return nil, fmt.Errorf("%w: expected %s, got %s", ErrFileChecksumInvalid, fileRecord.Checksum, emptyHash)
+		}
+		return fileRecord, nil
+	}
+
 	locations, err := p.store.GetChunkLocations(fileID)
 	if err != nil || len(locations) == 0 {
 		return nil, fmt.Errorf("%w: no chunk locations found for file: %v", ErrRestoreFailed, err)
@@ -163,7 +171,12 @@ func (p *RestorePipeline) Restore(ctx context.Context, fileID string, keyHex str
 			firstErr = res.err
 			poolCancel()
 		} else if res.err == nil {
-			decryptedChunks[res.index] = res.chunk
+			if res.index >= 0 && res.index < len(decryptedChunks) {
+				decryptedChunks[res.index] = res.chunk
+			} else if firstErr == nil {
+				firstErr = fmt.Errorf("%w: chunk index out of bounds: %d", ErrRestoreFailed, res.index)
+				poolCancel()
+			}
 		}
 	}
 	wg.Wait()
